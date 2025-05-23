@@ -1,0 +1,8 @@
+add_executable(ptaTool
+  ptaTool.cpp
+)
+target_link_libraries(ptaTool
+  PRIVATE
+    phasar
+    ${PHASAR_STD_FILESYSTEM}
+)
