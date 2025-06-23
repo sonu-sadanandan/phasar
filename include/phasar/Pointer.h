@@ -18,5 +18,7 @@
 #include "phasar/Pointer/AliasSetOwner.h"
 #include "phasar/Pointer/PointsToInfo.h"
 #include "phasar/Pointer/PointsToInfoBase.h"
+#include "phasar/Pointer/DirectAliasComputer.h"
+#include "phasar/Pointer/AliasGraph.h"
 
 #endif // PHASAR_POINTER_H
