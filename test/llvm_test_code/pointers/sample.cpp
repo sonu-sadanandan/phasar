@@ -1,20 +1,22 @@
-#include<iostream>
-using namespace std;
+#include <iostream>
 
-int main(){
-    int x =1;
-    int y =5;
+int global_x;
 
-    int *p1 = &x;
-    int *p2 = &y;
-    int *p4 = &y;
+void foo(int *p, int *q) {
+    *p = *q;
+}
 
-    int *p3;
-    if(x>5){
-        p3 = p1;
-    } else {
-        p3 = p2;
-    }
+int *bar() {
+    return &global_x;
+}
 
-return 0;
+int main() {
+    int a = 10, b = 20, c = 30;
+    foo(&a, &b);
+    foo(&c, &b);
+
+    int *ptr = bar();
+    *ptr = 42;
+
+    return 0;
 }
