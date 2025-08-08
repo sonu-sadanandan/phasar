@@ -53,7 +53,8 @@ int main(int argc, char **argv) {
     for (Function &F : *IRDB.getModule()) {
         if (F.isDeclaration()) continue;
 
-        auto FAV = AAObj->getAAResults(&F); 
+        auto FAV = AAObj->getAAResults(&F); // This returns by value
+
         Computer = std::make_unique<DirectAliasComputer>(
             AAObj->getAAResults(&F), AnalyzedFunctions,
             [&](const Value *A, const Value *B, AliasKind Kind) {

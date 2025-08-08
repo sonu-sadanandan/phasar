@@ -3,7 +3,11 @@
 
 #include <boost/functional/hash.hpp>
 #include "phasar/PhasarLLVM/Utils/LLVMShorthands.h"
+#include "phasar/PhasarLLVM/Pointer/AliasAnalysisView.h"
+#include "phasar/Pointer/AliasResult.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -11,7 +15,7 @@
 #include <string>
 #include <fstream>
 #include "llvm/IR/Value.h"
-#include "DirectAliasComputer.h"
+#include "AliasCommon.h"
 
 using Pointer = const llvm::Value*;
 
@@ -81,7 +85,7 @@ public:
             auto it2 = it1;
             ++it2;
             for (; it2 != aliasMap.end(); ++it2) {
-                const auto *Ptr2 = it1->first;
+                const auto *Ptr2 = it2->first;
                 auto *UO2 = llvm::getUnderlyingObject(Ptr2);
 
                 if (UO1 == UO2) {
@@ -214,8 +218,17 @@ public:
 
             clusters.push_back(std::move(cluster));
         }
-
         return clusters;
+    }
+
+    const llvm::Value *getRepresentative(const llvm::Value *V) const {
+        for (const auto &cluster : computeAliasClusters()) {
+            if (cluster.count(V)) {
+            // Arbitrarily pick the lexicographically smallest pointer
+            return *std::min_element(cluster.begin(), cluster.end());
+            }
+        }
+        return V; // If not in any cluster, return itself
     }
 
 
@@ -234,26 +247,6 @@ public:
             llvm::outs() << "}\n";
         }
     }
-
-/*    void printAliasClusters(const std::vector<std::unordered_set<Pointer>> &clusters) const {
-        llvm::outs() << "\nAlias Clusters (MustAlias-based):\n";
-        if (clusters.empty()) {
-            llvm::outs() << "  No clusters found.\n";
-            return;
-        }
-        int clusterId = 0;
-        for (const auto& cluster : clusters) {
-            llvm::outs() << "  Cluster " << clusterId++ << ": { ";
-            for (const auto &ptr : cluster) {
-                if (ptr)
-                    ptr->print(llvm::outs());
-                else
-                    llvm::outs() << "nullptr";
-                llvm::outs() << ", ";
-            }
-            llvm::outs() << "}\n";
-        }
-    } */
 
 private:
     std::unordered_map<std::pair<const llvm::Value *, const llvm::Value *>, int, PointerPairHash> MayAliasFrequency;

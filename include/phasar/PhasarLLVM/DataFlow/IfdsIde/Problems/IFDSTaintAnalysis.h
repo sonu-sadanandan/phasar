@@ -98,6 +98,10 @@ private:
   bool isSanitizerCall(const llvm::CallBase *CB,
                        const llvm::Function *Callee) const;
 
+  std::unique_ptr<AliasClusterInfo> ClusterInfo;
+  Pointer getClusterRep(Pointer V) const;
+  void populateWithClusterRepresentative(container_type &Facts) const;
+  
   void populateWithMayAliases(container_type &Facts,
                               const llvm::Instruction *AliasQueryInst) const;
   void populateWithMustAliases(container_type &Facts,

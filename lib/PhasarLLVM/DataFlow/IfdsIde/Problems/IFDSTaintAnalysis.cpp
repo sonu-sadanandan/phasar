@@ -24,6 +24,8 @@
 #include "phasar/PhasarLLVM/Utils/LLVMShorthands.h"
 #include "phasar/Utils/Logger.h"
 
+#include "phasar/Pointer/AliasClusterInfo.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -44,6 +46,7 @@ using container_type = IFDSTaintAnalysis::container_type;
 IFDSTaintAnalysis::IFDSTaintAnalysis(const LLVMProjectIRDB *IRDB,
                                      LLVMAliasInfoRef PT,
                                      const LLVMTaintConfig *Config,
+                                     const AliasGraph &Graph,
                                      std::vector<std::string> EntryPoints,
                                      bool TaintMainArgs)
     : IFDSTabulationProblem(IRDB, std::move(EntryPoints), createZeroValue()),
@@ -51,6 +54,8 @@ IFDSTaintAnalysis::IFDSTaintAnalysis(const LLVMProjectIRDB *IRDB,
       Llvmfdff(library_summary::readFromFDFF(getLibCSummary(), *IRDB)) {
   assert(Config != nullptr);
   assert(PT);
+
+  ClusterInfo = std::make_unique<AliasClusterInfo>(Graph);
 }
 
 bool IFDSTaintAnalysis::isSourceCall(const llvm::CallBase *CB,
@@ -270,45 +275,47 @@ auto IFDSTaintAnalysis::getNormalFlowFunction(n_t Curr,
   if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Curr)) {
     container_type Gen;
     Gen.insert(Store->getPointerOperand());
-    populateWithMayAliases(Gen, Store);
+    populateWithClusterRepresentative(Gen);
     if (Store->getValueOperand()->hasNUsesOrMore(2)) {
-      Gen.insert(Store->getValueOperand());
+      Gen.insert(getClusterRep(Store->getValueOperand()));
     }
 
     return lambdaFlow(
-        [Store, Gen{std::move(Gen)}](d_t Source) -> container_type {
-          if (Store->getPointerOperand() == Source) {
+        [Store, Gen{std::move(Gen)}, this](d_t Source) -> container_type {
+          const auto *RepSource = getClusterRep(Source); //representative of Source
+          if (getClusterRep(Store->getPointerOperand()) == RepSource) {
             return {};
           }
-          if (Store->getValueOperand() == Source) {
+          if (getClusterRep(Store->getValueOperand()) == RepSource) {
             return Gen;
           }
 
-          return {Source};
+          return {RepSource};
         });
   }
   // If a tainted value is loaded, the loaded value is of course tainted
   if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Curr)) {
-    return transferAndKillFlow(Load, Load->getPointerOperand());
+    return transferAndKillFlow(getClusterRep(Load), getClusterRep(Load->getPointerOperand()));
   }
   // Check if an address is computed from a tainted base pointer of an
   // aggregated object
   if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Curr)) {
-    return transferAndKillFlow(GEP, GEP->getPointerOperand());
+    return transferAndKillFlow(getClusterRep(GEP), getClusterRep(GEP->getPointerOperand()));
   }
   // Check if a tainted value is extracted and taint the targets of
   // the extract operation accordingly
   if (const auto *Extract = llvm::dyn_cast<llvm::ExtractValueInst>(Curr)) {
-    return transferAndKillFlow(Extract, Extract->getAggregateOperand());
+    return transferAndKillFlow(getClusterRep(Extract), getClusterRep(Extract->getAggregateOperand()));
   }
 
   if (const auto *Insert = llvm::dyn_cast<llvm::InsertValueInst>(Curr)) {
-    return transferAndKillTwoFlows(Insert, Insert->getAggregateOperand(),
-                                   Insert->getInsertedValueOperand());
+    return transferAndKillTwoFlows(getClusterRep(Insert),
+                                   getClusterRep(Insert->getAggregateOperand()),
+                                   getClusterRep(Insert->getInsertedValueOperand()));
   }
 
   if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Curr)) {
-    return transferFlow(Cast, Cast->getOperand(0));
+    return transferFlow(getClusterRep(Cast), getClusterRep(Cast->getOperand(0)));
   }
 
   // Otherwise we do not care and leave everything as it is
@@ -345,7 +352,8 @@ auto IFDSTaintAnalysis::getRetFlowFunction(n_t CallSite, f_t /*CalleeFun*/,
       [](d_t RetVal, d_t Source) { return RetVal == Source; }, {}, true, true,
       [this, CallSite](container_type &Res) {
         // Correctly handling return-POIs
-        populateWithMayAliases(Res, CallSite);
+        //populateWithMayAliases(Res, CallSite);
+        populateWithClusterRepresentative(Res);
       });
   // All other stuff is killed at this point
 }
@@ -530,6 +538,21 @@ bool IFDSTaintAnalysis::isInteresting(
     return true;
   }
   return Config->mayLeakValuesAt(Inst, nullptr);
+}
+
+Pointer IFDSTaintAnalysis::getClusterRep(Pointer V) const {
+  if (!ClusterInfo) {
+    return V;
+  }
+  return ClusterInfo->getRepresentative(V);
+}
+
+void IFDSTaintAnalysis::populateWithClusterRepresentative(container_type &Facts) const {
+  container_type NewFacts;
+  for (auto *Fact : Facts) {
+    NewFacts.insert(getClusterRep(Fact));
+  }
+  Facts = std::move(NewFacts);
 }
 
 } // namespace psr

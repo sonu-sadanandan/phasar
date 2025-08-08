@@ -20,5 +20,7 @@
 #include "phasar/Pointer/PointsToInfoBase.h"
 #include "phasar/Pointer/DirectAliasComputer.h"
 #include "phasar/Pointer/AliasGraph.h"
+#include "phasar/Pointer/AliasClusterInfo.h"
+#include "phasar/Pointer/AliasCommon.h"
 
 #endif // PHASAR_POINTER_H

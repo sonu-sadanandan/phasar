@@ -11,46 +11,10 @@
 
 #include <vector>
 #include <unordered_set>
-
-enum class AliasKind { MustAlias, MayAlias };
+#include <fstream>
+#include "AliasCommon.h"
 
 namespace phasar {
-
-    inline std::string getReadableName(const llvm::Value *V) {
-        static std::unordered_map<const llvm::Function *, std::unordered_map<std::string, int>> LoadCounters;
-
-        std::string Name;
-        llvm::raw_string_ostream RSO(Name);
-
-        if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(V)) {
-            RSO << Arg->getParent()->getName() << "_arg_" << Arg->getArgNo();
-        } else if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V)) {
-            const auto *F = Inst->getFunction();
-            std::string Opcode = Inst->getOpcodeName();
-
-            if (Opcode == "load") {
-                std::string base = F->getName().str() + "_load";
-                // Optionally append source name
-                if (Inst->getNumOperands() > 0 && Inst->getOperand(0)->hasName()) {
-                    base += "_" + Inst->getOperand(0)->getName().str();
-                }
-
-                int &Counter = LoadCounters[F][base];
-                RSO << base << "_" << Counter++;
-            } else {
-                RSO << F->getName() << "_" << Opcode;
-                if (V->hasName()) {
-                    RSO << "_" << V->getName();
-                }
-            }
-        } else if (const auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(V)) {
-            RSO << "global_" << GV->getName();
-        } else {
-            RSO << "anonval";
-        }
-
-        return RSO.str();
-    }
 
     class DirectAliasComputer {
       public:
@@ -69,8 +33,6 @@ namespace phasar {
             if (auto [Unused, Inserted] = AnalyzedFunctions_.insert(F); !Inserted) {
                 return;
             }
-
-            llvm::outs() << "Computing direct aliases for function: " << F->getName() << "\n";
 
             std::vector<const llvm::Value *> Pointers;
             llvm::DenseSet<const llvm::Value *> UsedGlobals;
@@ -98,26 +60,42 @@ namespace phasar {
                 Pointers.push_back(Glob);
             }
 
-            // Print collected pointers for debugging
-            llvm::outs() << "List of pointers collected for alias analysis:(" << Pointers.size() << " total):\n";
-            int idx = 0;
-            for (const auto *Ptr : Pointers) {
-                llvm::outs() << "  [" << idx++ << "] " << getReadableName(Ptr) << "\n";
-            }
+            TotalPointerCount += Pointers.size();
 
             // Check aliasing between all pairs of pointers
+            std::ofstream AliasLog("/workspaces/phasar/build/alias_log.txt");
             for (size_t i = 0; i < Pointers.size(); ++i) {
                 for (size_t j = i + 1; j < Pointers.size(); ++j) {
                     const llvm::Value *A = Pointers[i];
                     const llvm::Value *B = Pointers[j];
 
-                    psr::AliasResult Result = AA_.alias(A, B, DL);  
+                    psr::AliasResult Result = AA_.alias(A, B, DL); 
+                    AliasLog << "Checking alias between: "
+                    << getReadableName(A) << " and " << getReadableName(B)
+                    << " => ";
+                    switch (Result) {
+                        case psr::AliasResult::NoAlias:
+                            AliasLog << "NoAlias";
+                            break;
+                        case psr::AliasResult::MayAlias:
+                            AliasLog << "MayAlias";
+                            break;
+                        case psr::AliasResult::MustAlias:
+                            AliasLog << "MustAlias";
+                            break;
+                        case psr::AliasResult::PartialAlias:
+                            AliasLog << "PartialAlias";
+                            break;
+                    }
+
+                    AliasLog << "\n"; 
                     if (Result != psr::AliasResult::NoAlias) { 
                         AliasKind Kind = (Result == psr::AliasResult::MustAlias) ? AliasKind::MustAlias: AliasKind::MayAlias;
                         addAlias_(A, B, Kind);
                     }
                 }
             }
+            AliasLog.close();
 
             // Ensure all pointers exist as singleton nodes if they have no aliases
             for (const auto *Ptr : Pointers) {
@@ -125,11 +103,15 @@ namespace phasar {
             }
         }
 
+        size_t getTotalPointerCount() const { return TotalPointerCount; }
+
       private:
         psr::FunctionAliasView AA_;
         std::unordered_set<const llvm::Function *> &AnalyzedFunctions_;
         std::function<void(const llvm::Value *, const llvm::Value *, AliasKind)> addAlias_;
         std::function<void(const llvm::Value *)> ensureNode_;
+
+        size_t TotalPointerCount = 0;
     };
 }
 
