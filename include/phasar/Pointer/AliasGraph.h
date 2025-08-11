@@ -17,6 +17,8 @@
 #include "llvm/IR/Value.h"
 #include "AliasCommon.h"
 
+namespace psr {
+
 using Pointer = const llvm::Value*;
 
 struct AliasEdge {
@@ -254,5 +256,6 @@ private:
         return phasar::getReadableName(P);
     }
 };
+}
 
 #endif

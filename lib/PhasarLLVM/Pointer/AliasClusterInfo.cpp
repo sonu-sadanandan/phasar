@@ -3,6 +3,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 
+using namespace psr;
 
 AliasClusterInfo::AliasClusterInfo(const AliasGraph &Graph) {
   auto Clusters = Graph.computeAliasClusters();

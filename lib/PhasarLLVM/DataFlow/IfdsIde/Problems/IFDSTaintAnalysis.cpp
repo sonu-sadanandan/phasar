@@ -25,6 +25,7 @@
 #include "phasar/Utils/Logger.h"
 
 #include "phasar/Pointer/AliasClusterInfo.h"
+#include "phasar/Pointer/AliasGraph.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -51,11 +52,10 @@ IFDSTaintAnalysis::IFDSTaintAnalysis(const LLVMProjectIRDB *IRDB,
                                      bool TaintMainArgs)
     : IFDSTabulationProblem(IRDB, std::move(EntryPoints), createZeroValue()),
       Config(Config), PT(PT), TaintMainArgs(TaintMainArgs),
-      Llvmfdff(library_summary::readFromFDFF(getLibCSummary(), *IRDB)) {
+      Llvmfdff(library_summary::readFromFDFF(getLibCSummary(), *IRDB)),
+      ClusterInfo(Graph) {
   assert(Config != nullptr);
   assert(PT);
-
-  ClusterInfo = std::make_unique<AliasClusterInfo>(Graph);
 }
 
 bool IFDSTaintAnalysis::isSourceCall(const llvm::CallBase *CB,

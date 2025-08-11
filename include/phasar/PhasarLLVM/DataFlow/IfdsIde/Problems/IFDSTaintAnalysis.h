@@ -14,6 +14,7 @@
 #include "phasar/PhasarLLVM/DataFlow/IfdsIde/LLVMFunctionDataFlowFacts.h"
 #include "phasar/PhasarLLVM/Domain/LLVMAnalysisDomain.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMAliasInfo.h"
+#include "phasar/Pointer/AliasClusterInfo.h"
 
 #include <map>
 #include <set>
@@ -27,6 +28,7 @@ class CallBase;
 
 namespace psr {
 class LLVMTaintConfig;
+class AliasGraph;
 
 /**
  * This analysis tracks data-flows through a program. Data flows from
@@ -54,7 +56,7 @@ public:
    * @param EntryPoints
    */
   IFDSTaintAnalysis(const LLVMProjectIRDB *IRDB, LLVMAliasInfoRef PT,
-                    const LLVMTaintConfig *Config,
+                    const LLVMTaintConfig *Config, const AliasGraph &Graph,
                     std::vector<std::string> EntryPoints = {"main"},
                     bool TaintMainArgs = true);
 
@@ -91,14 +93,13 @@ private:
   LLVMAliasInfoRef PT{};
   bool TaintMainArgs{};
   library_summary::LLVMFunctionDataFlowFacts Llvmfdff;
+  AliasClusterInfo ClusterInfo;
 
   bool isSourceCall(const llvm::CallBase *CB,
                     const llvm::Function *Callee) const;
   bool isSinkCall(const llvm::CallBase *CB, const llvm::Function *Callee) const;
   bool isSanitizerCall(const llvm::CallBase *CB,
                        const llvm::Function *Callee) const;
-
-  std::unique_ptr<AliasClusterInfo> ClusterInfo;
   Pointer getClusterRep(Pointer V) const;
   void populateWithClusterRepresentative(container_type &Facts) const;
   
