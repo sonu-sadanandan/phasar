@@ -15,5 +15,10 @@
 #include "phasar/PhasarLLVM/Pointer/LLVMAliasInfo.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMAliasSet.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMPointsToUtils.h"
+#include "phasar/PhasarLLVM/Pointer/AliasClusterInfo.h"
+#include "phasar/PhasarLLVM/Pointer/AliasGraph.h"
+#include "phasar/PhasarLLVM/Pointer/AliasPipeline.h"
+#include "phasar/PhasarLLVM/Pointer/AliasCommon.h"
+#include "phasar/PhasarLLVM/Pointer/DirectAliasComputer.h"
 
 #endif // PHASAR_PHASARLLVM_POINTER_H

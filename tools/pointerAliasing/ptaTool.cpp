@@ -20,9 +20,9 @@
 #include "phasar/PhasarLLVM/Pointer/AliasAnalysisView.h"
 #include "phasar/PhasarLLVM/DB/LLVMProjectIRDB.h"
 
-#include "heuristics/HeuristicUtils.h"
-#include "DirectAliasComputer.h"
-#include "AliasGraph.h"
+#include "phasar/PhasarLLVM/Pointer/HeuristicUtils.h"
+#include "phasar/PhasarLLVM/Pointer/DirectAliasComputer.h"
+#include "phasar/PhasarLLVM/Pointer/AliasGraph.h"
 #include <chrono>
 #include <iomanip>
 

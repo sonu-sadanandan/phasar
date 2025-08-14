@@ -22,6 +22,8 @@
 #include "phasar/PhasarLLVM/Utils/DataFlowAnalysisType.h"
 #include "phasar/PhasarLLVM/Utils/LLVMIRToSrc.h"
 #include "phasar/PhasarLLVM/Utils/LLVMShorthands.h"
+#include "phasar/PhasarLLVM/Pointer/AliasGraph.h"
+#include "phasar/PhasarLLVM/Pointer/AliasClusterInfo.h"
 #include "phasar/Utils/Logger.h"
 
 #include "phasar/Pointer/AliasClusterInfo.h"
@@ -56,6 +58,10 @@ IFDSTaintAnalysis::IFDSTaintAnalysis(const LLVMProjectIRDB *IRDB,
       ClusterInfo(Graph) {
   assert(Config != nullptr);
   assert(PT);
+
+  auto AATy = PT.getAliasAnalysisType();
+  auto Pipe  = psr::buildAliasClusters(*const_cast<LLVMProjectIRDB*>(IRDB), AATy);
+  ClusterInfo = std::move(Pipe.Clusters);
 }
 
 bool IFDSTaintAnalysis::isSourceCall(const llvm::CallBase *CB,

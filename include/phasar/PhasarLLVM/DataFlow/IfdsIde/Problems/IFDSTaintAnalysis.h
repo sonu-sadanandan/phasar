@@ -14,7 +14,8 @@
 #include "phasar/PhasarLLVM/DataFlow/IfdsIde/LLVMFunctionDataFlowFacts.h"
 #include "phasar/PhasarLLVM/Domain/LLVMAnalysisDomain.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMAliasInfo.h"
-#include "phasar/Pointer/AliasClusterInfo.h"
+#include "phasar/PhasarLLVM/Pointer/AliasClusterInfo.h"
+#include "phasar/PhasarLLVM/Pointer/AliasPipeline.h"
 
 #include <map>
 #include <set>

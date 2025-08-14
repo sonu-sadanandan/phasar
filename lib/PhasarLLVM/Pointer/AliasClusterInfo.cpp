@@ -1,4 +1,4 @@
-#include "phasar/Pointer/AliasClusterInfo.h"
+#include "phasar/PhasarLLVM/Pointer/AliasClusterInfo.h"
 #include "phasar/PhasarLLVM/Utils/LLVMShorthands.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
