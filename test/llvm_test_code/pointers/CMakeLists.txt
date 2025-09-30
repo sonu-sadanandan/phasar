@@ -5,6 +5,10 @@ set(lca_files
   global_01.cpp
   inter_dynamic_01.cpp
   inter_dynamic_02.cpp
+  aliasing_test_case.cpp
+  aliasing_test_case_02.cpp
+  sample.cpp
+  sample2.cpp
 )
 
 set(lca_files_mem2reg

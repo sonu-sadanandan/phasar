@@ -1,0 +1,11 @@
+{
+  "source_functions": [
+    { "name": "_Z6sourcev",     "returns_tainted": true }
+  ],
+  "sink_functions": [
+    { "name": "_Z4sinkPKc",     "tainted_args": [0] }
+  ],
+  "sanitizer_functions": [
+    { "name": "_Z8sanitizePKc", "sanitizes_return": true }
+  ]
+}

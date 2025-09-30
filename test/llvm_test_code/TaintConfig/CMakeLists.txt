@@ -1,2 +1,3 @@
 add_subdirectory(AttrConfig)
 add_subdirectory(JsonConfig)
+add_subdirectory(JsonConfig_ClusterTest)
