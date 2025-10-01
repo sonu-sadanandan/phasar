@@ -221,33 +221,6 @@ public:
         return clusters;
     }
 
-    const llvm::Value *getRepresentative(const llvm::Value *V) const {
-        for (const auto &cluster : computeAliasClusters()) {
-            if (cluster.count(V)) {
-            // Arbitrarily pick the lexicographically smallest pointer
-            return *std::min_element(cluster.begin(), cluster.end());
-            }
-        }
-        return V; // If not in any cluster, return itself
-    }
-
-
-    void printAliasClusters(const std::vector<std::unordered_set<Pointer>> &clusters) const {
-        llvm::outs() << "\nAlias Clusters (MustAlias-based):\n";
-        if (clusters.empty()) {
-            llvm::outs() << "  No clusters found.\n";
-            return;
-        }
-        int clusterId = 0;
-        for (const auto& cluster : clusters) {
-            llvm::outs() << "  Cluster " << clusterId++ << ": { ";
-            for (const auto &ptr : cluster) {
-                llvm::outs() << getNodeName(ptr) << ", ";
-            }
-            llvm::outs() << "}\n";
-        }
-    }
-
 private:
     std::unordered_map<std::pair<const llvm::Value *, const llvm::Value *>, int, PointerPairHash> MayAliasFrequency;
     std::string getNodeName(const Pointer &P) const {

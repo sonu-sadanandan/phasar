@@ -24,7 +24,7 @@
 
 namespace psr {
 
-// Domain: keep LLVM default (d_t is Value*)
+// Domain: LLVM default (d_t is Value*)
 struct ClusterIFDSDomain : public LLVMIFDSAnalysisDomainDefault {
   using d_t = const llvm::Value *;
 };
@@ -34,7 +34,6 @@ using D  = typename ClusterIFDSDomain::d_t;
 using C  = std::set<D>;
 using FF = FlowFunctionPtrType<D, C>;
 
-// ------------------ Analysis declaration ----------------
 class IFDSClusterTaintAnalysis : public IFDSTabulationProblem<ClusterIFDSDomain> {
 public:
   using n_t = typename ClusterIFDSDomain::n_t;
@@ -96,7 +95,6 @@ private:
   const LLVMTaintConfig &TC_;
   std::vector<SinkHit> SinkHits_;
 
-  // (Optional) lightweight state you already had; keep if you still want it
   std::unordered_set<const llvm::Value*> TaintedReps_;
 };
 
