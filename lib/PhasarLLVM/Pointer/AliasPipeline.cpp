@@ -45,7 +45,8 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
 
     // NEW: Store→Load promotion (correct relation: loaded pointer value == stored pointer value),
     // using same-BB fast path clobber checks
-    R.Graph->promoteByStoreLoad(F, *R.Graph, FAV, DL);
+    llvm::DominatorTree DT(F);
+    R.Graph->promoteByStoreLoadXBBStrict(F, *R.Graph, FAV, DL, DT);
   }
 
   // Structural must-alias edges (same base + const offset; zero-index GEPs)

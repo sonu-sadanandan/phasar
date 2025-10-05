@@ -161,57 +161,64 @@ static std::string buildClustersText(const psr::AliasClusterInfo &ACI,
 static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
   using CB = psr::LLVMTaintConfig::TaintDescriptionCallBackTy;
 
+  // SOURCE: _Z6sourcev()  – taint the return value (the call itself)
   CB src = [](const llvm::Instruction *I) {
     std::set<const llvm::Value*> Out;
-    auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
+    const auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
     if (!Call) return Out;
-    if (const auto *F = getCalledTarget(Call)) {
-      if (F->getName() == "free" && Call->arg_size() > 0) {
-        Out.insert(Call->getArgOperand(0));
-        llvm::outs() << "[tc] SOURCE   match at "
-                       << " arg0\n";
-      }
-    }
-    return Out;
-  };
 
-  CB sink = [](const llvm::Instruction *I) {
-    std::set<const llvm::Value*> Out;
-    auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
-    if (!Call) return Out;
     if (const auto *F = getCalledTarget(Call)) {
+      // accept both mangled and demangled spellings
       auto N = namesOf(F);
-      if (isAnyOf(N, {"free","free()","_ZdlPv","operator delete(void*)",
-                      "operator delete","_Z4sinkPKc"})) {
-        if (Call->arg_size() > 0) {
-          Out.insert(Call->getArgOperand(0));
-          llvm::outs() << "[tc] SINK   match at " << N[0] << " / " << N[1]
-                       << " arg0\n";
-        }
-      }
-    }
-    return Out;
-  };
-
-  CB san = [](const llvm::Instruction *I) {
-    std::set<const llvm::Value*> Out;
-    auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
-    if (!Call) return Out;
-    if (const auto *F = getCalledTarget(Call)) {
-      auto N = namesOf(F);
-      if (isAnyOf(N, {"_Z8sanitizePKc","sanitize(char const*)","sanitize"})) {
+      if (isAnyOf(N, {"_Z6sourcev", "source", "source()"})) {
+        // Taint the call's SSA result if non-void
         if (I->getType() && !I->getType()->isVoidTy()) {
           Out.insert(I);
-          llvm::outs() << "[tc] SAN    match at " << N[0] << " / " << N[1]
-                       << " (return)\n";
+          llvm::outs() << "[tc] SOURCE match: " << N[0] << " (return)\n";
         }
       }
     }
+    return Out;
+  };
+
+  // SINK: _Z4sinkPKc(arg0). Optionally also include free/delete for other tests.
+  CB sink = [](const llvm::Instruction *I) {
+    std::set<const llvm::Value*> Out;
+    const auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
+    if (!Call) return Out;
+
+    if (const auto *F = getCalledTarget(Call)) {
+      auto N = namesOf(F);
+      // Primary sink in this program
+      if (isAnyOf(N, {"_Z4sinkPKc", "sink", "sink(char const*)"})) {
+        if (Call->arg_size() > 0) {
+          Out.insert(Call->getArgOperand(0));
+          llvm::outs() << "[tc] SINK   match: " << N[0] << " arg0\n";
+        }
+      }
+
+      // kept these for double-free tests to trigger
+      else if (isAnyOf(N, {"free","free()","_ZdlPv",
+                           "operator delete(void*)","operator delete"})) {
+        if (Call->arg_size() > 0) {
+          Out.insert(Call->getArgOperand(0));
+          llvm::outs() << "[tc] SINK   match (deallocator): " << N[0] << " arg0\n";
+        }
+      }
+    }
+    return Out;
+  };
+
+  // No sanitizer in the JSON; keep empty or custom one if needed.
+  CB san = [](const llvm::Instruction *I) {
+    std::set<const llvm::Value*> Out;
+    (void)I; // no-op
     return Out;
   };
 
   return psr::LLVMTaintConfig(std::move(src), std::move(sink), std::move(san));
 }
+
 
 } // namespace
 
