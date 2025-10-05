@@ -14,8 +14,8 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
   AliasPipelineResult R;
   R.Graph = std::make_unique<AliasGraph>();
 
-  // Create an AA view for this IRDB/module with the requested AA type
-  auto AAView = AliasAnalysisView::create(IRDB, true, AATy);
+  // AA view for the whole module
+  auto AAView = AliasAnalysisView::create(IRDB, /*WithGlobals*/ true, AATy);
 
   std::unordered_set<const llvm::Function *> AnalyzedFunctions;
   std::unique_ptr<phasar::DirectAliasComputer> Computer;
@@ -29,8 +29,10 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
     if (F.isDeclaration())
       continue;
 
+    // View bound to this function (used for alias queries in your heuristics)
     auto FAV = AAView->getAAResults(&F);
 
+    // Direct alias edges (your existing collector)
     Computer = std::make_unique<phasar::DirectAliasComputer>(
         FAV, AnalyzedFunctions,
         [&](const llvm::Value *A, const llvm::Value *B, AliasKind Kind) {
@@ -41,15 +43,22 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
     Computer->computeDirectAliases(&F);
     R.TotalPointers += Computer->getTotalPointerCount();
 
-    // Heuristic 5 (store→load) that needs alias queries between stores
-    R.Graph->promoteByStoreLoad(F, *R.Graph, FAV);
+    // NEW: Store→Load promotion (correct relation: loaded pointer value == stored pointer value),
+    // using same-BB fast path clobber checks
+    R.Graph->promoteByStoreLoad(F, *R.Graph, FAV, DL);
   }
 
-  // Add more MustAlias edges from structural patterns (heuristic 4)
+  // Structural must-alias edges (same base + const offset; zero-index GEPs)
   R.Graph->addHeuristicMustAliasEdges(DL);
 
+  // NEW: Frequency-based May→Must, with degree-aware threshold + base+offset corroboration.
+  // Tune alpha/hardMin if needed.
+  R.Graph->promoteFrequentMayAliases(DL, /*alpha=*/0.5, /*hardMin=*/3);
+
+  // Keep any additional custom heuristics
   HeuristicUtils::applyAllHeuristics(*R.Graph);
 
+  // Build clusters from MustAlias edges
   R.Clusters = std::make_unique<AliasClusterInfo>(*R.Graph);
 
   auto TEnd = std::chrono::high_resolution_clock::now();
