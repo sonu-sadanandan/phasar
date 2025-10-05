@@ -1,7 +1,6 @@
 add_executable(ptaTool
   ptaTool.cpp
   IFDSClusterTaintAnalysis.cpp
-  heuristics/HeuristicUtils.cpp
   taintIO/taintIO.cpp  
 )
 target_link_libraries(ptaTool

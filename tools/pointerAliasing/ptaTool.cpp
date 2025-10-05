@@ -168,6 +168,8 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
     if (const auto *F = getCalledTarget(Call)) {
       if (F->getName() == "free" && Call->arg_size() > 0) {
         Out.insert(Call->getArgOperand(0));
+        llvm::outs() << "[tc] SOURCE   match at "
+                       << " arg0\n";
       }
     }
     return Out;
