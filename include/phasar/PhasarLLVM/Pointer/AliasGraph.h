@@ -13,7 +13,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Analysis/MemoryLocation.h"
-#include "llvm/IR/Dominators.h" // NEW: for cross-BB dominance
+#include "llvm/IR/Dominators.h" 
 
 #include <unordered_map>
 #include <unordered_set>
@@ -69,12 +69,12 @@ class AliasGraph {
 public:
   AliasMap aliasMap;
 
-  // --- Compatibility: keep existing method; it forwards to origin-aware one with null origin. ---
+  // --- Compatibility: it forwards to origin-aware one with null origin.
   void recordMayAliasFrequency(Pointer A, Pointer B) {
     recordMayAliasFrequency(A, B, /*F*/ nullptr, /*I*/ nullptr);
   }
 
-  // New: origin-deduped frequency recorder
+  //origin-deduped frequency recorder
   void recordMayAliasFrequency(Pointer A, Pointer B,
                                const llvm::Function* F,
                                const llvm::Instruction* I) {

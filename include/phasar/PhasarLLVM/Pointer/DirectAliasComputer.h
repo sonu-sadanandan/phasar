@@ -12,7 +12,6 @@
 
 #include <vector>
 #include <unordered_set>
-#include <fstream>
 
 namespace phasar {
 
@@ -63,39 +62,18 @@ namespace phasar {
             TotalPointerCount += Pointers.size();
 
             // Check aliasing between all pairs of pointers
-            std::ofstream AliasLog("/workspaces/phasar/build/alias_log.txt");
             for (size_t i = 0; i < Pointers.size(); ++i) {
                 for (size_t j = i + 1; j < Pointers.size(); ++j) {
                     const llvm::Value *A = Pointers[i];
                     const llvm::Value *B = Pointers[j];
 
-                    psr::AliasResult Result = AA_.alias(A, B, DL); 
-                    AliasLog << "Checking alias between: "
-                    << getReadableName(A) << " and " << getReadableName(B)
-                    << " => ";
-                    switch (Result) {
-                        case psr::AliasResult::NoAlias:
-                            AliasLog << "NoAlias";
-                            break;
-                        case psr::AliasResult::MayAlias:
-                            AliasLog << "MayAlias";
-                            break;
-                        case psr::AliasResult::MustAlias:
-                            AliasLog << "MustAlias";
-                            break;
-                        case psr::AliasResult::PartialAlias:
-                            AliasLog << "PartialAlias";
-                            break;
-                    }
-
-                    AliasLog << "\n"; 
+                    psr::AliasResult Result = AA_.alias(A, B, DL);  
                     if (Result != psr::AliasResult::NoAlias) { 
                         AliasKind Kind = (Result == psr::AliasResult::MustAlias) ? AliasKind::MustAlias: AliasKind::MayAlias;
                         addAlias_(A, B, Kind);
                     }
                 }
             }
-            AliasLog.close();
 
             // Ensure all pointers exist as singleton nodes if they have no aliases
             for (const auto *Ptr : Pointers) {

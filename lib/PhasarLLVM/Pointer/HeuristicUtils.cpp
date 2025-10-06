@@ -3,7 +3,6 @@
 namespace HeuristicUtils {
 
     void applyIsolatedMayAliasHeuristic(psr::AliasGraph &Graph) {
-        llvm::outs() << "Applying Isolated MayAlias Heuristic...\n";
         for (const auto &entry : Graph.aliasMap) {
             const psr::Pointer &A = entry.first;
             const auto &edges = entry.second;
@@ -43,8 +42,6 @@ namespace HeuristicUtils {
                 }
 
                 if (mayB == 1) {
-                    // llvm::outs() << "Isolated MayAlias found: " << phasar::getReadableName(A) << " <-> "
-                    //             << phasar::getReadableName(candidate) << "\n";
                     Graph.addAlias(A, candidate, AliasKind::MustAlias);
                 }
             }
@@ -52,7 +49,6 @@ namespace HeuristicUtils {
     }
 
     void applySharedMustAliasHeuristic(psr::AliasGraph &Graph) {
-        llvm::outs() << "Applying Shared MustAlias Heuristic...\n";
         for (const auto &entryA : Graph.aliasMap) {
             const psr::Pointer &A = entryA.first;
             const auto &edgesA = entryA.second;
@@ -76,8 +72,6 @@ namespace HeuristicUtils {
 
                 for (const auto &common : mustsA) {
                     if (mustsB.count(common)) {
-                        llvm::outs() << "Shared MustAlias found: " << phasar::getReadableName(A) << " <-> "
-                                     << phasar::getReadableName(B) << " via " << phasar::getReadableName(common) << "\n";
                         Graph.addAlias(A, B, AliasKind::MustAlias);
                         break;
                     }

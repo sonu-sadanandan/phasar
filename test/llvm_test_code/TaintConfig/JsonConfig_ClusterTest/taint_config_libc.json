@@ -1,0 +1,10 @@
+{
+  "source_functions": [
+    { "name": "fgets", "tainted_args": [], "returns_tainted": true }
+  ],
+  "sink_functions": [
+    { "name": "sink", "tainted_args": [0] }
+  ],
+  "sanitizer_functions": [],
+  "propagators": []
+}

@@ -5,8 +5,6 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <chrono>
-
 namespace psr {
 
 AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
@@ -22,8 +20,6 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
 
   auto *Mod = IRDB.getModule();
   const auto &DL = Mod->getDataLayout();
-
-  auto TStart = std::chrono::high_resolution_clock::now();
 
   for (llvm::Function &F : *Mod) {
     if (F.isDeclaration())
@@ -62,10 +58,7 @@ AliasPipelineResult buildAliasClusters(LLVMProjectIRDB &IRDB,
   // Build clusters from MustAlias edges
   R.Clusters = std::make_unique<AliasClusterInfo>(*R.Graph);
 
-  auto TEnd = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> Secs = TEnd - TStart;
-  llvm::outs() << "[AliasPipeline] Built graph + clusters in " << Secs.count()
-               << "s, total pointers: " << R.TotalPointers << "\n";
+  llvm::outs() << "s, total pointers: " << R.TotalPointers << "\n";
 
   return R;
 }

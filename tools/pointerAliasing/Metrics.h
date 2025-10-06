@@ -1,5 +1,10 @@
 #pragma once
 
+// Metrics with verbosity control:
+// - SummaryOnly (default): collect per-phase data, print only final summary.
+// - Verbose: also print BEGIN/END live logs.
+// - Silent: collect nothing and print nothing (cheap).
+
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -81,29 +86,59 @@ inline std::string fmtMs(double ms) {
   return os.str();
 }
 
+// ---------- Verbosity control ----------
+enum class TimingVerbosity { Verbose = 1, SummaryOnly = 0, Silent = 2 };
+
+inline TimingVerbosity &timingVerbosity() {
+#if defined(PSR_PERF_DEFAULT_VERBOSE)
+  static TimingVerbosity V =
+      (PSR_PERF_DEFAULT_VERBOSE == 1) ? TimingVerbosity::Verbose :
+      (PSR_PERF_DEFAULT_VERBOSE == 2) ? TimingVerbosity::Silent  :
+                                        TimingVerbosity::SummaryOnly;
+#else
+  static TimingVerbosity V = TimingVerbosity::SummaryOnly; // default
+#endif
+  return V;
+}
+
+inline void setTimingVerbosity(TimingVerbosity V) { timingVerbosity() = V; }
+
+inline bool liveLogsEnabled()   { return timingVerbosity() == TimingVerbosity::Verbose; }
+inline bool summaryEnabled()    { return timingVerbosity() != TimingVerbosity::Silent; }
+inline bool collectionEnabled() { return timingVerbosity() != TimingVerbosity::Silent; }
+
+// ---------- Scoped phase ----------
 struct ScopedPhase {
   std::string       Name;
   Clock::time_point T0;
   std::uint64_t     RSS0 = 0;
 
   explicit ScopedPhase(std::string N)
-      : Name(std::move(N)), T0(Clock::now()), RSS0(rssBytes()) {
-    llvm::outs() << "[time] " << wallNow()
-                 << "  BEGIN  " << Name
-                 << "  rss="   << fmtBytes(RSS0) << "\n";
+      : Name(std::move(N)),
+        T0(Clock::now()),
+        RSS0(collectionEnabled() ? rssBytes() : 0) {
+    if (liveLogsEnabled()) {
+      llvm::outs() << "[time] " << wallNow()
+                   << "  BEGIN  " << Name
+                   << "  rss="   << fmtBytes(RSS0) << "\n";
+    }
   }
 
   ~ScopedPhase() {
+    if (!collectionEnabled()) return;
+
     const auto t1   = Clock::now();
     const auto ms   = std::chrono::duration<double, std::milli>(t1 - T0).count();
     const auto rss1 = rssBytes();
     const auto dlt  = (rss1 > RSS0) ? (rss1 - RSS0) : 0;
 
-    llvm::outs() << "[time] " << wallNow()
-                 << "  END    " << Name
-                 << "  elapsed=" << fmtMs(ms) << " ms"
-                 << "  rss="     << fmtBytes(rss1)
-                 << "  (Δ "      << fmtBytes(dlt) << ")\n";
+    if (liveLogsEnabled()) {
+      llvm::outs() << "[time] " << wallNow()
+                   << "  END    " << Name
+                   << "  elapsed=" << fmtMs(ms) << " ms"
+                   << "  rss="     << fmtBytes(rss1)
+                   << "  (Δ "      << fmtBytes(dlt) << ")\n";
+    }
 
     phases().push_back(PhaseResult{ Name, ms, RSS0, rss1 });
   }
@@ -112,7 +147,9 @@ struct ScopedPhase {
   ScopedPhase& operator=(const ScopedPhase&) = delete;
 };
 
+// ---------- Summary ----------
 inline void printPhaseSummary() {
+  if (!summaryEnabled()) return;
   llvm::outs() << "\n[time] Phase summary:\n";
   for (const auto &R : phases()) {
     llvm::outs() << "  - " << R.Name << ": "

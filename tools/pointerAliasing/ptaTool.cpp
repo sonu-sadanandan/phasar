@@ -174,7 +174,6 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
         // Taint the call's SSA result if non-void
         if (I->getType() && !I->getType()->isVoidTy()) {
           Out.insert(I);
-          llvm::outs() << "[tc] SOURCE match: " << N[0] << " (return)\n";
         }
       }
     }
@@ -193,7 +192,6 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
       if (isAnyOf(N, {"_Z4sinkPKc", "sink", "sink(char const*)"})) {
         if (Call->arg_size() > 0) {
           Out.insert(Call->getArgOperand(0));
-          llvm::outs() << "[tc] SINK   match: " << N[0] << " arg0\n";
         }
       }
 
@@ -202,7 +200,6 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
                            "operator delete(void*)","operator delete"})) {
         if (Call->arg_size() > 0) {
           Out.insert(Call->getArgOperand(0));
-          llvm::outs() << "[tc] SINK   match (deallocator): " << N[0] << " arg0\n";
         }
       }
     }
@@ -312,16 +309,6 @@ int main(int argc, const char **argv) {
       } else {
         TC = makeSimpleCallbackConfig();
       }
-    }
-
-    {
-      auto &src = TC.getRegisteredSourceCallBack();
-      auto &snk = TC.getRegisteredSinkCallBack();
-      auto &san = TC.getRegisteredSanitizerCallBack();
-      llvm::outs() << "[dbg] callbacks set: "
-                   << "src="  << (src ? "Y" : "N")
-                   << " sink="<< (snk ? "Y" : "N")
-                   << " san=" << (san ? "Y" : "N") << "\n";
     }
 
     // Analysis + solver

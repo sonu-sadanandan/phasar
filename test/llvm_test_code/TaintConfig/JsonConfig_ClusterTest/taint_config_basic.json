@@ -1,0 +1,12 @@
+{
+  "source_functions": [
+    { "name": "source", "returns_tainted": true }
+  ],
+  "sink_functions": [
+    { "name": "sink", "tainted_args": [0] }
+  ],
+  "sanitizer_functions": [
+    { "name": "sanitize", "sanitizes_return": true }
+  ],
+  "propagators": []
+}

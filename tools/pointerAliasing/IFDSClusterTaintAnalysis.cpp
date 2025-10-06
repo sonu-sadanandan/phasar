@@ -159,16 +159,6 @@ namespace psr {
 
   // ---------- normal flow ----------
   FF IFDSClusterTaintAnalysis::getNormalFlowFunction(n_t Curr, n_t /*Succ*/) {
-    // Debug hook (optional)
-    if (auto *CB = dyn_cast<CallBase>(Curr)) {
-      if (const auto *F = getCalledTarget(CB)) {
-        llvm::outs() << "[hook] " << __FUNCTION__
-                    << " callee mangled=" << F->getName()
-                    << " dem=" << phasar::getReadableName(F) << "\n";
-      } else {
-        llvm::outs() << "[hook] " << __FUNCTION__ << " indirect call\n";
-      }
-    }
 
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
       [this, Curr](d_t In) -> std::set<d_t> {
@@ -187,7 +177,6 @@ namespace psr {
               const auto *RC = rep(Curr);
               Out.insert(RC);
               TaintedReps_.insert(RC); // mark the derived SSA as tainted
-              llvm::outs() << "[dbg] ASSIGN taint -> " << psr::llvmIRToShortString(rep(Curr)) << "\n";
               break;
             }
           }
@@ -199,7 +188,6 @@ namespace psr {
         if (isa<StoreInst>(Curr) || isa<LoadInst>(Curr)) {
           auto MemOut = memTransfer(Curr, In);
           for (auto *V : MemOut) {
-            llvm::outs() << "[dbg] MEM taint -> " << psr::llvmIRToShortString(V) << "\n";
             Out.insert(V);
             TaintedReps_.insert(V);    // mark tainted memory/loads
           }
@@ -216,17 +204,6 @@ namespace psr {
   // ---------- call flow (actuals -> formals) + ZERO->sources ----------
   FF IFDSClusterTaintAnalysis::getCallFlowFunction(n_t CallSite, f_t DestFun) {
     auto *CB = llvm::dyn_cast<llvm::CallBase>(CallSite);
-
-    // --- DEBUG (keep if you want) ---
-    if (CB) {
-      if (const auto *F = getCalledTarget(CB)) {
-        llvm::outs() << "[hook] " << __FUNCTION__
-                    << " callee mangled=" << F->getName()
-                    << " dem=" << phasar::getReadableName(F) << "\n";
-      } else {
-        llvm::outs() << "[hook] " << __FUNCTION__ << " indirect call\n";
-      }
-    }
 
     if (!CB || !DestFun) {
       return FlowFunctions<ClusterIFDSDomain, C>::identityFlow();
@@ -265,15 +242,6 @@ namespace psr {
   // ---------- return flow (formals/ret -> actuals/call) with fact-sensitive sanitizer ----------
   FF IFDSClusterTaintAnalysis::getRetFlowFunction(n_t CallSite, f_t Callee,
                                                   n_t ExitSite, n_t /*RetSite*/) {
-    if (auto *CBlog = dyn_cast<CallBase>(CallSite)) {
-      if (const auto *F = getCalledTarget(CBlog)) {
-        llvm::outs() << "[hook] " << __FUNCTION__
-                    << " callee mangled=" << F->getName()
-                    << " dem=" << phasar::getReadableName(F) << "\n";
-      } else {
-        llvm::outs() << "[hook] " << __FUNCTION__ << " indirect call\n";
-      }
-    }
 
     auto *CB  = dyn_cast<CallBase>(CallSite);
     auto *Ret = dyn_cast<ReturnInst>(ExitSite);
@@ -318,7 +286,6 @@ namespace psr {
             const auto *RA = rep(CB->getArgOperand(ArgIdx));
             Out.insert(RA);
             TaintedReps_.insert(RA); // mark actual as tainted
-            llvm::outs() << "[dbg] ARG taint -> " << psr::llvmIRToShortString(RA) << "\n";
           }
           ++ArgIdx;
         }
@@ -331,7 +298,6 @@ namespace psr {
             const auto *CR = rep(CB);
             Out.insert(CR);
             TaintedReps_.insert(CR);
-            llvm::outs() << "[dbg] RET taint -> " << psr::llvmIRToShortString(CR) << "\n";
           }
         }
 
@@ -427,15 +393,6 @@ namespace psr {
 
         const auto *Rs = rep(Source);               // value rep
         const auto *Cs = cellRep(Source, ACI_);     // cell rep (may be null)
-
-        // -- DEBUG:
-        llvm::outs() << "[sum] call=" << psr::llvmIRToShortString(CS)
-                    << " Rs=" << psr::llvmIRToShortString(Rs)
-                    << " Cs=" << (Cs ? psr::llvmIRToShortString(Cs) : "null")
-                    << " Gen=" << GenR.size()
-                    << " LeakV=" << LeakR.size()
-                    << " LeakC=" << LeakCellR.size()
-                    << " Kill=" << KillR.size() << "\n";
 
         // 1) same value rep or 2) same memory-cell rep
         const bool isLeakByValue = LeakR.count(Rs);
