@@ -10,6 +10,9 @@ set(JsonConfig_ClusterTestSources
   test08_cpp_string.cpp
   test09_clusterExample.cpp
   test10_sample.cpp
+  return_src.c
+  outparam_src.c
+  libc_fgets_cmd.c
 )
 
 foreach(TEST_SRC ${JsonConfig_ClusterTestSources})
@@ -23,6 +26,9 @@ set(JsonConfig_ClusterConfigFiles
   sample_config.json
   taint_config_basic.json
   taint_config_libc.json
+  return_taint.json
+  libc_cmd.json
+  outparam_taint.json
 )
 
 # Copy each JSON configuration file from the source directory to the build directory.
