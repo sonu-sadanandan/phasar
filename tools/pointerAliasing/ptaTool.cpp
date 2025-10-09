@@ -161,7 +161,7 @@ static std::string buildClustersText(const psr::AliasClusterInfo &ACI,
 static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
   using CB = psr::LLVMTaintConfig::TaintDescriptionCallBackTy;
 
-  // SOURCE: _Z6sourcev()  – taint the return value (the call itself)
+  // SOURCE
   CB src = [](const llvm::Instruction *I) {
     std::set<const llvm::Value*> Out;
     const auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
@@ -171,7 +171,6 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
       // accept both mangled and demangled spellings
       auto N = namesOf(F);
       if (isAnyOf(N, {"_Z6sourcev", "source", "source()"})) {
-        // Taint the call's SSA result if non-void
         if (I->getType() && !I->getType()->isVoidTy()) {
           Out.insert(I);
         }
@@ -180,7 +179,7 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
     return Out;
   };
 
-  // SINK: _Z4sinkPKc(arg0). Optionally also include free/delete for other tests.
+  // SINK
   CB sink = [](const llvm::Instruction *I) {
     std::set<const llvm::Value*> Out;
     const auto *Call = llvm::dyn_cast<llvm::CallBase>(I);
@@ -209,7 +208,7 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
   // No sanitizer in the JSON; keep empty or custom one if needed.
   CB san = [](const llvm::Instruction *I) {
     std::set<const llvm::Value*> Out;
-    (void)I; // no-op
+    (void)I; 
     return Out;
   };
 
@@ -235,7 +234,6 @@ int main(int argc, const char **argv) {
       errs() << "[error] this PhASAR build expects exactly one IR file; got "
              << InputModules.size() << "\n";
       exitCode = 2;
-      // fall through; we still want TOTAL to print
     } else {
       // IRDB
       std::unique_ptr<psr::LLVMProjectIRDB> IRDBPtr;
@@ -369,7 +367,6 @@ int main(int argc, const char **argv) {
     psr::perf::printPhaseSummary();
   } // ----- TOTAL scope ends; TOTAL destructor pushes the phase -----
 
-  // Now TOTAL exists in the summary store
   psr::perf::printTotals(analysisLabel.empty() ? std::string_view{} 
                                                : std::string_view(analysisLabel));
   return exitCode;

@@ -236,7 +236,7 @@ namespace psr {
   }
 
   // ---------- normal flow ----------
-  FF IFDSClusterTaintAnalysis::getNormalFlowFunction(n_t Curr, n_t /*Succ*/) {
+  FF IFDSClusterTaintAnalysis::getNormalFlowFunction(n_t Curr, n_t) {
     // store: value -> memory cell; keep tainted cell tainted
     if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Curr)) {
       const Value *Ptr = Store->getPointerOperand();
@@ -404,7 +404,7 @@ namespace psr {
     for (auto *V : Leak) { if (auto *CR = cellRep(V, ACI_, *this)) LeakCellR.insert(CR); }
 
     if (GenR.empty() && LeakR.empty() && KillR.empty()) {
-      return nullptr; // fall back to normal/ret flows (and lib summaries if you wire them)
+      return nullptr; // fall back to normal/ret flows (and lib summaries if we wire them)
     }
 
     // ZERO seeds
