@@ -46,19 +46,69 @@ namespace psr {
       Hits.push_back({Call, Name, Rep});
     }
 
-    static const llvm::Value *loadBasePtr(const llvm::Value *V) {
+    static const llvm::Value *cellRep(const llvm::Value *V,
+                                      const psr::AliasClusterInfo &ACI) {
+      if (!V) return nullptr;
       if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-        return LI->getPointerOperand()->stripPointerCasts();
+        return ACI.getRepresentative(LI->getPointerOperand()->stripPointerCasts());
+      }
+      if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
+        return ACI.getRepresentative(GEP->getPointerOperand()->stripPointerCasts());
+      }
+      if (V->getType()->isPointerTy()) {
+        return ACI.getRepresentative(V->stripPointerCasts());
       }
       return nullptr;
     }
 
-    static const llvm::Value *cellRep(const llvm::Value *V,
-                                      const psr::AliasClusterInfo &ACI) {
-      if (const auto *Base = loadBasePtr(V)) {
-        return ACI.getRepresentative(Base); // cluster rep of the memory cell
-      }
-      return nullptr;
+    // “transfer and kill” like upstream, but cluster-aware
+    template <typename DSet>
+    static auto transferAndKillFlowRep(const llvm::Value *To,
+                                      const llvm::Value *From,
+                                      const psr::AliasClusterInfo &ACI)
+        -> FF {
+      const auto *ToR   = ACI.getRepresentative(To);
+      const auto *FromR = ACI.getRepresentative(From);
+      const bool KillFrom = !From->hasNUsesOrMore(2);
+
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+          [ToR, FromR, KillFrom](const llvm::Value *In) -> std::set<const llvm::Value*> {
+            std::set<const llvm::Value*> Out;
+            if (In == FromR) {
+              Out.insert(ToR);
+              if (!KillFrom) Out.insert(FromR);
+              return Out;
+            }
+            if (KillFrom && In == ToR) {
+              return Out; // drop To when we “moved” it
+            }
+            Out.insert(In);
+            return Out;
+          });
+    }
+
+    template <typename DSet>
+    static auto transferAndKillTwoFlowsRep(const llvm::Value *To,
+                                          const llvm::Value *From1,
+                                          const llvm::Value *From2,
+                                          const psr::AliasClusterInfo &ACI)
+        -> FF {
+      const auto *ToR = ACI.getRepresentative(To);
+      const auto *F1R = ACI.getRepresentative(From1);
+      const auto *F2R = ACI.getRepresentative(From2);
+      const bool KillF1 = !From1->hasNUsesOrMore(2);
+      const bool KillF2 = !From2->hasNUsesOrMore(2);
+
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+          [ToR, F1R, F2R, KillF1, KillF2](const llvm::Value *In) -> std::set<const llvm::Value*> {
+            std::set<const llvm::Value*> Out;
+            const bool Hit = (In == F1R) || (In == F2R);
+            if (Hit) Out.insert(ToR);
+            if (!(KillF1 && In == F1R) && !(KillF2 && In == F2R) && In != ToR) {
+              Out.insert(In);
+            }
+            return Out;
+          });
     }
   } // namespace
 
@@ -80,14 +130,6 @@ namespace psr {
   const Value* IFDSClusterTaintAnalysis::rep(const Value* V) const {
     if (!V || isZeroValue(V)) return V;
     return ACI_.getRepresentative(V);
-  }
-
-  // ---------- tiny classification helpers ----------
-  static inline bool isAssignLike(const Instruction* I) {
-    return isa<BitCastInst>(I) || isa<GetElementPtrInst>(I) ||
-          isa<PHINode>(I)    || I->isCast()                ||
-          isa<SelectInst>(I) || isa<UnaryInstruction>(I)   ||
-          isa<BinaryOperator>(I);
   }
 
   // ---------- memory transfer rules (cluster-aware) ----------
@@ -156,268 +198,226 @@ namespace psr {
                       [this](const auto &Arg){ return TC_.isSanitizer(&Arg); });
   }
 
-
   // ---------- normal flow ----------
   FF IFDSClusterTaintAnalysis::getNormalFlowFunction(n_t Curr, n_t /*Succ*/) {
+    // store: value -> memory cell; keep tainted cell tainted
+    if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Curr)) {
+      const Value *Ptr = Store->getPointerOperand();
+      const Value *Val = Store->getValueOperand();
+      const Value *PtrR = rep(Ptr);
+      const Value *ValR = rep(Val);
 
-    return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-      [this, Curr](d_t In) -> std::set<d_t> {
-        std::set<d_t> Out;
-        if (this->isZeroValue(In)) {
-          Out.insert(In);
-          return Out;
-        }
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+        [this, PtrR, ValR](d_t In) -> std::set<d_t> {
+          std::set<d_t> Out;
+          if (this->isZeroValue(In)) { Out.insert(In); return Out; }
 
-        In = rep(In);
-
-        // Assign-like copy
-        if (isAssignLike(Curr)) {
-          for (const llvm::Value *Op : Curr->operand_values()) {
-            if (rep(Op) == In) {
-              const auto *RC = rep(Curr);
-              Out.insert(RC);
-              TaintedReps_.insert(RC); // mark the derived SSA as tainted
-              break;
-            }
+          if (In == ValR) {
+            Out.insert(PtrR);                   // write taint into memory cell
+            TaintedReps_.insert(PtrR);
+          }
+          if (In == PtrR) {
+            Out.insert(PtrR);                   // keep cell tainted
           }
           Out.insert(In);
           return Out;
-        }
+        });
+    }
 
-        // Memory traffic
-        if (isa<StoreInst>(Curr) || isa<LoadInst>(Curr)) {
-          auto MemOut = memTransfer(Curr, In);
-          for (auto *V : MemOut) {
-            Out.insert(V);
-            TaintedReps_.insert(V);    // mark tainted memory/loads
-          }
-          Out.insert(In);
+    // load: memory cell -> loaded SSA
+    if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Curr)) {
+      return transferAndKillFlowRep<std::set<d_t>>(Load, Load->getPointerOperand(), ACI_);
+    }
+
+    // gep: address computation from tainted base
+    if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Curr)) {
+      return transferAndKillFlowRep<std::set<d_t>>(GEP, GEP->getPointerOperand(), ACI_);
+    }
+
+    // extractvalue / insertvalue (aggregate)
+    if (const auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(Curr)) {
+      return transferAndKillFlowRep<std::set<d_t>>(EV, EV->getAggregateOperand(), ACI_);
+    }
+    if (const auto *IV = llvm::dyn_cast<llvm::InsertValueInst>(Curr)) {
+      return transferAndKillTwoFlowsRep<std::set<d_t>>(IV, IV->getAggregateOperand(),
+                                                      IV->getInsertedValueOperand(), ACI_);
+    }
+
+    // cast: simple value copy
+    if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Curr)) {
+      const auto *DstR = rep(Cast);
+      const auto *SrcR = rep(Cast->getOperand(0));
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+        [DstR, SrcR](d_t In) -> std::set<d_t> {
+          std::set<d_t> Out{In};
+          if (In == SrcR) Out.insert(DstR);
           return Out;
-        }
+        });
+    }
 
-        // Identity
-        Out.insert(In);
-        return Out;
-      });
+    // identity
+    return FlowFunctions<ClusterIFDSDomain, C>::identityFlow();
   }
 
   // ---------- call flow (actuals -> formals) + ZERO->sources ----------
   FF IFDSClusterTaintAnalysis::getCallFlowFunction(n_t CallSite, f_t DestFun) {
-    auto *CB = llvm::dyn_cast<llvm::CallBase>(CallSite);
+    const auto *CS = llvm::cast<llvm::CallBase>(CallSite);
+    if (!DestFun) return FlowFunctions<ClusterIFDSDomain, C>::identityFlow();
 
-    if (!CB || !DestFun) {
-      return FlowFunctions<ClusterIFDSDomain, C>::identityFlow();
+    if (isSourceCall(CS, DestFun) || isSinkCall(CS, DestFun)) {
+      // mirror upstream: kill all; seeding happens in summary/ret flows
+      return FlowFunctions<ClusterIFDSDomain, C>::killAllFlows();
     }
 
-    //  Only kill on SOURCE calls. Let facts survive at SINK calls so the summary
-    //  can see the incoming tainted arg and record the leak.
-    if (isSourceCall(CB, DestFun)) {
-      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-        [this](d_t In){ return this->isZeroValue(In) ? std::set<d_t>{In} : std::set<d_t>{}; });
-    }
-
+    // actual -> formal (cluster-aware)
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-      [this, CB, DestFun](d_t In) -> std::set<d_t> {
+      [this, CS, DestFun](d_t In) -> std::set<d_t> {
         if (this->isZeroValue(In)) return {In};
+        std::set<d_t> Out{rep(In)};
         if (!DestFun->isDeclaration()) {
-          std::set<d_t> Out;
-          d_t Rin = rep(In);
-          unsigned ArgIdx = 0;
-          for (const llvm::Argument &Formal : DestFun->args()) {
-            if (ArgIdx < CB->arg_size() && rep(CB->getArgOperand(ArgIdx)) == Rin) {
+          unsigned I = 0;
+          for (const auto &Formal : DestFun->args()) {
+            if (I < CS->arg_size() && rep(CS->getArgOperand(I)) == rep(In)) {
               Out.insert(rep(&Formal));
             }
-            ++ArgIdx;
+            ++I;
           }
-          Out.insert(Rin);
-          return Out;
         }
-        // For declarations (e.g., free), just keep the fact.
-        return {rep(In)};
+        return Out;
       });
   }
-
-
 
   // ---------- return flow (formals/ret -> actuals/call) with fact-sensitive sanitizer ----------
   FF IFDSClusterTaintAnalysis::getRetFlowFunction(n_t CallSite, f_t Callee,
                                                   n_t ExitSite, n_t /*RetSite*/) {
-
-    auto *CB  = dyn_cast<CallBase>(CallSite);
-    auto *Ret = dyn_cast<ReturnInst>(ExitSite);
+    const auto *CS  = llvm::cast<llvm::CallBase>(CallSite);
+    const auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(ExitSite);
 
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-      [this, CB, Ret, Callee](d_t In) -> std::set<d_t> {
+      [this, CS, Callee, Ret](d_t In) -> std::set<d_t> {
         std::set<d_t> Out;
+        if (this->isZeroValue(In)) { Out.insert(In); return Out; }
 
-        if (this->isZeroValue(In)) {
-          Out.insert(In);
-          return Out;
-        }
+        const auto *Rin = rep(In);
 
-        In = rep(In);
-
-        if (!CB || !Callee) {
-          Out.insert(In);
-          return Out;
-        }
-
-        // Collect sanitized values at this call (cluster-aware)
-        bool CallResultSanitized = false;
-        std::unordered_set<const llvm::Value*> Sanitized;
-        TC_.forAllSanitizedValuesAt(CB, Callee, [&](const llvm::Value* V) {
-          Sanitized.insert(rep(V));
-        });
-
-        // Kill only THIS fact if it's sanitized here
-        if (Sanitized.count(In)) {
-          return Out; // drop just this one
-        }
-
-        // If the call's result is sanitized, don't propagate ret -> call result
-        if (Sanitized.count(rep(CB))) {
-          CallResultSanitized = true;
-        }
-
-        // formal -> actual
-        unsigned ArgIdx = 0;
-        for (const llvm::Argument &Formal : Callee->args()) {
-          if (rep(&Formal) == In && ArgIdx < CB->arg_size()) {
-            const auto *RA = rep(CB->getArgOperand(ArgIdx));
-            Out.insert(RA);
-            TaintedReps_.insert(RA); // mark actual as tainted
+        // formal -> actual (only pointer-typed formals, like upstream)
+        unsigned I = 0;
+        for (const auto &Formal : Callee->args()) {
+          if (Formal.getType()->isPointerTy() && Rin == rep(&Formal) && I < CS->arg_size()) {
+            Out.insert(rep(CS->getArgOperand(I)));
           }
-          ++ArgIdx;
+          ++I;
         }
 
-        // ret value -> call result (unless the call result is sanitized)
-        if (!CallResultSanitized &&
-            Ret && Ret->getReturnValue() &&
-            CB->getType() && !CB->getType()->isVoidTy()) {
-          if (rep(Ret->getReturnValue()) == In) {
-            const auto *CR = rep(CB);
-            Out.insert(CR);
-            TaintedReps_.insert(CR);
+        // ret -> call result
+        if (Ret && Ret->getReturnValue() && CS->getType() && !CS->getType()->isVoidTy()) {
+          if (Rin == rep(Ret->getReturnValue())) {
+            Out.insert(rep(CS));
           }
         }
 
+        // keep original fact
+        Out.insert(Rin);
         return Out;
       });
   }
 
   FF IFDSClusterTaintAnalysis::getCallToRetFlowFunction(n_t CallSite, n_t /*RetSite*/,
                                                         llvm::ArrayRef<f_t> Callees) {
-    auto *CB = dyn_cast<CallBase>(CallSite);
-    if (!CB) {
-      return FlowFunctions<ClusterIFDSDomain, C>::identityFlow();
-    }
+    //const auto *CS = llvm::cast<llvm::CallBase>(CallSite);
+    const bool HasDeclOnly = llvm::any_of(Callees, [](const Function *F){ return F->isDeclaration(); });
 
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-      [this](d_t In) -> std::set<d_t> {
+      [this, HasDeclOnly](d_t In) -> std::set<d_t> {
         if (this->isZeroValue(In)) return {In};
-        return {rep(In)};
+        const auto *Rin = rep(In);
+
+        // like upstream: keep non-pointer facts, and if any callee is decl-only, keep everything
+        if (HasDeclOnly || !Rin->getType()->isPointerTy()) {
+          return {Rin};
+        }
+
+        // otherwise, drop pointer facts that don't “flow alongside” (we do the same as original)
+        return {};
       });
   }
 
   FF IFDSClusterTaintAnalysis::getSummaryFlowFunction(n_t CallSite, f_t DestFun) {
-    auto *CS = llvm::cast<llvm::CallBase>(CallSite);
+    const auto *CS = llvm::cast<llvm::CallBase>(CallSite);
     if (!DestFun) return nullptr;
 
-    // Buckets from TaintConfigUtilities (clusterize them!)
-    std::set<const llvm::Value*> Gen;
-    std::set<const llvm::Value*> Leak;
-    std::set<const llvm::Value*> Kill;
+    std::set<const Value*> Gen, Leak, Kill;
+    TC_.forAllGeneratedValuesAt(CS, DestFun, [&](const Value* V){ Gen.insert(V); });
+    TC_.forAllLeakCandidatesAt(CS, DestFun, [&](const Value* V){ Leak.insert(V); });
+    TC_.forAllSanitizedValuesAt(CS, DestFun, [&](const Value* V){ Kill.insert(V); });
 
-    // Fill from config (exactly like IFDSTaintAnalysis)
-    TC_.forAllGeneratedValuesAt(CS, DestFun, [&](const llvm::Value* V){ Gen.insert(V); });
-    TC_.forAllLeakCandidatesAt(CS, DestFun, [&](const llvm::Value* V){ Leak.insert(V); });
-    TC_.forAllSanitizedValuesAt(CS, DestFun, [&](const llvm::Value* V){ Kill.insert(V); });
-
-    // sret handling
+    // sret: if not generated, kill it
     if (CS->hasStructRetAttr()) {
       const auto *SRet = CS->getArgOperand(0);
-      if (!Gen.count(SRet)) {
-        Kill.insert(SRet);
-      }
+      if (!Gen.count(SRet)) Kill.insert(SRet);
     }
 
-    // Map every collected value to its cluster representative
-    auto repify = [this](const std::set<const llvm::Value*> &InSet) {
-      std::set<const llvm::Value*> Out;
-      for (auto *V : InSet) Out.insert(rep(V));
-      return Out;
-    };
+    auto repify = [this](const std::set<const Value*> &S){
+      std::set<const Value*> R; for (auto *V : S) R.insert(rep(V)); return R; };
     auto GenR  = repify(Gen);
     auto LeakR = repify(Leak);
     auto KillR = repify(Kill);
-    std::set<const llvm::Value*> LeakCellR;
-    for (const auto *V : Leak) {
-      if (const auto *CR = cellRep(V, ACI_)) {
-        LeakCellR.insert(CR);
-      }
+
+    // also compute “cell reps” for Gen/Leak so we model memory effects
+    std::set<const Value*> GenCellR, LeakCellR;
+    for (auto *V : Gen)  { if (auto *CR = cellRep(V, ACI_))  GenCellR.insert(CR); }
+    for (auto *V : Leak) { if (auto *CR = cellRep(V, ACI_)) LeakCellR.insert(CR); }
+
+    if (GenR.empty() && LeakR.empty() && KillR.empty()) {
+      return nullptr; // fall back to normal/ret flows (and lib summaries if you wire them)
     }
 
-    // If nothing to do, return nullptr (lets solver use normal/ret flows)
-    if (GenR.empty() && LeakR.empty() && KillR.empty()) return nullptr;
-
-    // Add ZERO to Gen
+    // ZERO seeds
     GenR.insert(LLVMZeroValue::getInstance());
+    if (!GenCellR.empty()) GenCellR.insert(LLVMZeroValue::getInstance());
 
-    const Function *F = getCalledTarget(CS);
-    const std::string SinkName = F ? demangledBase(F) : std::string("<indirect>");
-
-    if (const llvm::Function *Enclosing = CS->getFunction()) {
-      unsigned argIdx = 0;
-      for (const llvm::Argument &Formal : Enclosing->args()) {
-        if (argIdx < CS->arg_size()) {
-          const llvm::Value *Act = CS->getArgOperand(argIdx);
-          const auto *ActR = rep(Act);
-          const auto *FormR = rep(&Formal);
-          if (GenR.count(ActR)) {
-            GenR.insert(FormR); // ensure formal is tainted too
-          }
-        }
-        ++argIdx;
-      }
-    }
+    // debug (compact)
+    llvm::outs() << "[dbg] Summary for call: " << psr::llvmIRToShortString(CS) << "\n"
+                << "[dbg]  DestFun name: '" << DestFun->getName() << "' decl?=" << DestFun->isDeclaration() << "\n";
 
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
-      [this, CS, SinkName,
-      GenR{std::move(GenR)}, LeakR{std::move(LeakR)},
-      KillR{std::move(KillR)}, LeakCellR{std::move(LeakCellR)}]
-      (d_t Source) -> std::set<d_t> {
+      [this, CS, DestFun,
+      GenR{std::move(GenR)}, GenCellR{std::move(GenCellR)},
+      LeakR{std::move(LeakR)}, LeakCellR{std::move(LeakCellR)},
+      KillR{std::move(KillR)}](d_t In) -> std::set<d_t> {
 
-        if (LLVMZeroValue::isLLVMZeroValue(Source)) {
-          return GenR; // generate sources
+        // generate from ZERO
+        if (LLVMZeroValue::isLLVMZeroValue(In)) {
+          std::set<d_t> Seeds = GenR;
+          Seeds.insert(GenCellR.begin(), GenCellR.end());
+          return Seeds;
         }
 
-        const auto *Rs = rep(Source);               // value rep
-        const auto *Cs = cellRep(Source, ACI_);     // cell rep (may be null)
+        const auto *Rs = rep(In);
+        const auto *Cs = cellRep(In, ACI_);
 
-        // 1) same value rep or 2) same memory-cell rep
-        const bool isLeakByValue = LeakR.count(Rs);
-        const bool isLeakByCell  = Cs && LeakCellR.count(Cs);
-
-        if (isLeakByValue || isLeakByCell) {
-          llvm::outs() << "[sum] LEAK hit at "
-                      << psr::llvmIRToShortString(CS)
-                      << " via " << (isLeakByValue ? "value" : "cell")
+        // leak check: by value or by memory cell
+        const bool LeakByVal  = LeakR.count(Rs);
+        const bool LeakByCell = Cs && LeakCellR.count(Cs);
+        if (LeakByVal || LeakByCell) {
+          llvm::outs() << "[sum] LEAK hit at " << psr::llvmIRToShortString(CS)
+                      << " via " << (LeakByVal ? "value" : "cell")
                       << " Rs=" << psr::llvmIRToShortString(Rs)
                       << (Cs ? " Cs=" + psr::llvmIRToShortString(Cs) : "")
+                      << " callee=" << CS->getCalledOperand()->getName()
                       << "\n";
-          // record
-          pushSink(this->SinkHits_, CS, SinkName, Rs);
-          // do not kill; we just report
+          pushSink(this->SinkHits_, CS, DestFun->getName().str(), Rs);
         }
 
+        // kill facts sanitized here (by rep)
         if (KillR.count(Rs)) {
-          return {}; // drop just this fact
+          return {};
         }
 
         return {Rs};
-      });
+      }
+    );
   }
-
 
   // ---------- seeds ----------
   psr::InitialSeeds<IFDSClusterTaintAnalysis::n_t,
