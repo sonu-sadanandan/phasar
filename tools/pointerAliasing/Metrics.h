@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "llvm/Support/raw_ostream.h"
@@ -147,16 +148,57 @@ struct ScopedPhase {
   ScopedPhase& operator=(const ScopedPhase&) = delete;
 };
 
+// ---------- Helpers for totals ----------
+inline const PhaseResult* findPhase(std::string_view name) {
+  for (const auto &R : phases()) {
+    if (R.Name == name) return &R;
+  }
+  return nullptr;
+}
+
+inline void printTotals(std::string_view AnalysisLabel = {}) {
+  if (!summaryEnabled()) return;
+
+  // Overall
+  if (const auto *Tot = findPhase("TOTAL")) {
+    const auto rssDelta = (Tot->RSSEnd > Tot->RSSStart) ? (Tot->RSSEnd - Tot->RSSStart) : 0ULL;
+    llvm::outs() << "\n[time] TOTAL: "
+                 << fmtMs(Tot->Ms) << " ms"
+                 << " | rss start=" << fmtBytes(Tot->RSSStart)
+                 << " end="         << fmtBytes(Tot->RSSEnd)
+                 << " (Δ "          << fmtBytes(rssDelta) << ")"
+                 << " | peak(HWM)=" << fmtBytes(hwmBytes())
+                 << "\n";
+  }
+
+  // Per-analysis (if present)
+  if (!AnalysisLabel.empty()) {
+    std::string tag = std::string("ANALYSIS: ") + std::string(AnalysisLabel);
+    if (const auto *A = findPhase(tag)) {
+      const auto rssDelta = (A->RSSEnd > A->RSSStart) ? (A->RSSEnd - A->RSSStart) : 0ULL;
+      llvm::outs() << "[time] " << tag << ": "
+                   << fmtMs(A->Ms) << " ms"
+                   << " | rss start=" << fmtBytes(A->RSSStart)
+                   << " end="         << fmtBytes(A->RSSEnd)
+                   << " (Δ "          << fmtBytes(rssDelta) << ")"
+                   << " | peak(HWM)=" << fmtBytes(hwmBytes())
+                   << "\n";
+    }
+  }
+}
+
 // ---------- Summary ----------
 inline void printPhaseSummary() {
   if (!summaryEnabled()) return;
   llvm::outs() << "\n[time] Phase summary:\n";
   for (const auto &R : phases()) {
+    const auto rssDelta = (R.RSSEnd > R.RSSStart) ? (R.RSSEnd - R.RSSStart) : 0ULL;
     llvm::outs() << "  - " << R.Name << ": "
                  << fmtMs(R.Ms) << " ms"
                  << " | rss start=" << fmtBytes(R.RSSStart)
                  << " end="         << fmtBytes(R.RSSEnd)
-                 << " peak="        << fmtBytes(hwmBytes())
+                 << " (Δ "          << fmtBytes(rssDelta) << ")"
+                 << " | peak(HWM)=" << fmtBytes(hwmBytes())
                  << "\n";
   }
 }

@@ -54,6 +54,10 @@ public:
   FF getCallToRetFlowFunction(n_t CallSite, n_t RetSite, llvm::ArrayRef<f_t> Callees) override;
   FF getSummaryFlowFunction(n_t CallSite, f_t DestFun) override;
 
+  const llvm::Value *baseObject(const llvm::Value *V) const;
+  const llvm::Value *repBase(const llvm::Value *V) const;
+  const llvm::DataLayout &DL() const;
+
   // Seeds & pretty-printing
   psr::InitialSeeds<n_t, d_t, psr::BinaryDomain> initialSeeds() override;
 

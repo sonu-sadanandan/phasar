@@ -2,6 +2,8 @@
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/DataLayout.h"
 
 #include "phasar/DataFlow/IfdsIde/FlowFunctions.h"
 #include "phasar/PhasarLLVM/DataFlow/IfdsIde/LLVMZeroValue.h"
@@ -47,16 +49,19 @@ namespace psr {
     }
 
     static const llvm::Value *cellRep(const llvm::Value *V,
-                                      const psr::AliasClusterInfo &ACI) {
+                                      const psr::AliasClusterInfo &ACI,
+                                      const IFDSClusterTaintAnalysis &A) {
       if (!V) return nullptr;
+
+      // If we’re modeling a memory cell, get the pointer feeding it, then its base
       if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-        return ACI.getRepresentative(LI->getPointerOperand()->stripPointerCasts());
+        return ACI.getRepresentative(A.baseObject(LI->getPointerOperand()));
       }
       if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
-        return ACI.getRepresentative(GEP->getPointerOperand()->stripPointerCasts());
+        return ACI.getRepresentative(A.baseObject(GEP->getPointerOperand()));
       }
       if (V->getType()->isPointerTy()) {
-        return ACI.getRepresentative(V->stripPointerCasts());
+        return ACI.getRepresentative(A.baseObject(V));
       }
       return nullptr;
     }
@@ -132,6 +137,35 @@ namespace psr {
     return ACI_.getRepresentative(V);
   }
 
+  const llvm::DataLayout &IFDSClusterTaintAnalysis::DL() const {
+    return IRDB_.getModule()->getDataLayout();
+  }
+
+  const llvm::Value *IFDSClusterTaintAnalysis::baseObject(const llvm::Value *V) const {
+    if (!V) return nullptr;
+
+    // Fast path: drop in-bounds constant offsets (handles many GEPs cleanly)
+    V = V->stripInBoundsOffsets();
+
+    // Ask LLVM for underlying objects (allocas/globals/args), bounded search
+    llvm::SmallVector<llvm::Value*, 4> Under;
+    llvm::getUnderlyingObject(const_cast<llvm::Value*>(V), 20);
+
+    if (Under.size() == 1) return Under.front();
+
+    // Conservative fallback: peel one level if obviously a pointer transform
+    if (const auto *G = llvm::dyn_cast<llvm::GEPOperator>(V)) return G->getPointerOperand();
+    if (const auto *B = llvm::dyn_cast<llvm::BitCastOperator>(V)) return B->getOperand(0);
+
+    // Could not canonicalize further; keep as-is
+    return V;
+  }
+
+  const llvm::Value *IFDSClusterTaintAnalysis::repBase(const llvm::Value *V) const {
+    if (!V || isZeroValue(V)) return V;
+    return ACI_.getRepresentative(baseObject(V));
+  }
+
   // ---------- memory transfer rules (cluster-aware) ----------
   std::set<IFDSClusterTaintAnalysis::d_t>
   IFDSClusterTaintAnalysis::memTransfer(const Instruction* I, d_t In) const {
@@ -141,16 +175,19 @@ namespace psr {
     if (auto *SI = dyn_cast<StoreInst>(I)) {
       const Value *Val = SI->getValueOperand();
       const Value *Ptr = SI->getPointerOperand();
-      if (rep(Val) == In) {
-        Out.insert(rep(Ptr));          // value -> memory location
+      const Value *ValR = repBase(Val);
+      const Value *PtrR = repBase(Ptr);
+
+      if (ValR == In) {
+        Out.insert(PtrR);                 // content taint flows into pointee base
       }
-      if (rep(Ptr) == In) {
-        Out.insert(In);                // keep tainted location tainted
+      if (PtrR == In) {
+        Out.insert(PtrR);                 // keep tainted cell tainted
       }
     } else if (auto *LI = dyn_cast<LoadInst>(I)) {
-      const Value *Ptr = LI->getPointerOperand();
-      if (rep(Ptr) == In) {
-        Out.insert(rep(LI));           // memory location -> loaded SSA
+      const Value *PtrR = repBase(LI->getPointerOperand());
+      if (PtrR == In) {
+        Out.insert(repBase(LI));          // pointee base -> loaded SSA fact
       }
     }
     return Out;
@@ -204,8 +241,8 @@ namespace psr {
     if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Curr)) {
       const Value *Ptr = Store->getPointerOperand();
       const Value *Val = Store->getValueOperand();
-      const Value *PtrR = rep(Ptr);
-      const Value *ValR = rep(Val);
+      const Value *PtrR = repBase(Ptr);
+      const Value *ValR = repBase(Val);
 
       return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
         [this, PtrR, ValR](d_t In) -> std::set<d_t> {
@@ -226,12 +263,12 @@ namespace psr {
 
     // load: memory cell -> loaded SSA
     if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Curr)) {
-      return transferAndKillFlowRep<std::set<d_t>>(Load, Load->getPointerOperand(), ACI_);
+      return transferAndKillFlowRep<std::set<d_t>>(repBase(Load), repBase(Load->getPointerOperand()), ACI_);
     }
 
     // gep: address computation from tainted base
     if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Curr)) {
-      return transferAndKillFlowRep<std::set<d_t>>(GEP, GEP->getPointerOperand(), ACI_);
+      return transferAndKillFlowRep<std::set<d_t>>(repBase(GEP), repBase(GEP->getPointerOperand()), ACI_);
     }
 
     // extractvalue / insertvalue (aggregate)
@@ -245,8 +282,8 @@ namespace psr {
 
     // cast: simple value copy
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Curr)) {
-      const auto *DstR = rep(Cast);
-      const auto *SrcR = rep(Cast->getOperand(0));
+      const auto *DstR = repBase(Cast);
+      const auto *SrcR = repBase(Cast->getOperand(0));
       return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
         [DstR, SrcR](d_t In) -> std::set<d_t> {
           std::set<d_t> Out{In};
@@ -273,12 +310,12 @@ namespace psr {
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
       [this, CS, DestFun](d_t In) -> std::set<d_t> {
         if (this->isZeroValue(In)) return {In};
-        std::set<d_t> Out{rep(In)};
+        std::set<d_t> Out{repBase(In)};
         if (!DestFun->isDeclaration()) {
           unsigned I = 0;
           for (const auto &Formal : DestFun->args()) {
-            if (I < CS->arg_size() && rep(CS->getArgOperand(I)) == rep(In)) {
-              Out.insert(rep(&Formal));
+            if (I < CS->arg_size() && repBase(CS->getArgOperand(I)) == repBase(In)) {
+              Out.insert(repBase(&Formal));
             }
             ++I;
           }
@@ -298,24 +335,21 @@ namespace psr {
         std::set<d_t> Out;
         if (this->isZeroValue(In)) { Out.insert(In); return Out; }
 
-        const auto *Rin = rep(In);
-
+        const auto *Rin = repBase(In);
         // formal -> actual (only pointer-typed formals, like upstream)
         unsigned I = 0;
         for (const auto &Formal : Callee->args()) {
-          if (Formal.getType()->isPointerTy() && Rin == rep(&Formal) && I < CS->arg_size()) {
-            Out.insert(rep(CS->getArgOperand(I)));
+          if (Formal.getType()->isPointerTy() && Rin == repBase(&Formal) && I < CS->arg_size()) {
+            Out.insert(repBase(CS->getArgOperand(I)));
           }
           ++I;
         }
-
         // ret -> call result
         if (Ret && Ret->getReturnValue() && CS->getType() && !CS->getType()->isVoidTy()) {
-          if (Rin == rep(Ret->getReturnValue())) {
-            Out.insert(rep(CS));
+          if (Rin == repBase(Ret->getReturnValue())) {
+            Out.insert(repBase(CS));
           }
         }
-
         // keep original fact
         Out.insert(Rin);
         return Out;
@@ -330,7 +364,7 @@ namespace psr {
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
       [this, HasDeclOnly](d_t In) -> std::set<d_t> {
         if (this->isZeroValue(In)) return {In};
-        const auto *Rin = rep(In);
+        const auto *Rin = repBase(In);
 
         // like upstream: keep non-pointer facts, and if any callee is decl-only, keep everything
         if (HasDeclOnly || !Rin->getType()->isPointerTy()) {
@@ -357,16 +391,17 @@ namespace psr {
       if (!Gen.count(SRet)) Kill.insert(SRet);
     }
 
-    auto repify = [this](const std::set<const Value*> &S){
-      std::set<const Value*> R; for (auto *V : S) R.insert(rep(V)); return R; };
-    auto GenR  = repify(Gen);
-    auto LeakR = repify(Leak);
-    auto KillR = repify(Kill);
+    auto repifyBase = [this](const std::set<const Value*> &S){
+      std::set<const Value*> R; for (auto *V : S) R.insert(repBase(V)); return R;
+    };
+    auto GenR  = repifyBase(Gen);
+    auto LeakR = repifyBase(Leak);
+    auto KillR = repifyBase(Kill);
 
-    // also compute “cell reps” for Gen/Leak so we model memory effects
+    // also compute “cell reps” using base-object of pointer operands
     std::set<const Value*> GenCellR, LeakCellR;
-    for (auto *V : Gen)  { if (auto *CR = cellRep(V, ACI_))  GenCellR.insert(CR); }
-    for (auto *V : Leak) { if (auto *CR = cellRep(V, ACI_)) LeakCellR.insert(CR); }
+    for (auto *V : Gen)  { if (auto *CR = cellRep(V, ACI_, *this))  GenCellR.insert(CR); }
+    for (auto *V : Leak) { if (auto *CR = cellRep(V, ACI_, *this)) LeakCellR.insert(CR); }
 
     if (GenR.empty() && LeakR.empty() && KillR.empty()) {
       return nullptr; // fall back to normal/ret flows (and lib summaries if you wire them)
@@ -375,10 +410,6 @@ namespace psr {
     // ZERO seeds
     GenR.insert(LLVMZeroValue::getInstance());
     if (!GenCellR.empty()) GenCellR.insert(LLVMZeroValue::getInstance());
-
-    // debug (compact)
-    llvm::outs() << "[dbg] Summary for call: " << psr::llvmIRToShortString(CS) << "\n"
-                << "[dbg]  DestFun name: '" << DestFun->getName() << "' decl?=" << DestFun->isDeclaration() << "\n";
 
     return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
       [this, CS, DestFun,
@@ -393,19 +424,13 @@ namespace psr {
           return Seeds;
         }
 
-        const auto *Rs = rep(In);
-        const auto *Cs = cellRep(In, ACI_);
+        const auto *Rs = repBase(In);
+        const auto *Cs = cellRep(In, ACI_, *this);
 
         // leak check: by value or by memory cell
         const bool LeakByVal  = LeakR.count(Rs);
         const bool LeakByCell = Cs && LeakCellR.count(Cs);
         if (LeakByVal || LeakByCell) {
-          llvm::outs() << "[sum] LEAK hit at " << psr::llvmIRToShortString(CS)
-                      << " via " << (LeakByVal ? "value" : "cell")
-                      << " Rs=" << psr::llvmIRToShortString(Rs)
-                      << (Cs ? " Cs=" + psr::llvmIRToShortString(Cs) : "")
-                      << " callee=" << CS->getCalledOperand()->getName()
-                      << "\n";
           pushSink(this->SinkHits_, CS, DestFun->getName().str(), Rs);
         }
 

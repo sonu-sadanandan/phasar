@@ -221,144 +221,157 @@ static psr::LLVMTaintConfig makeSimpleCallbackConfig() {
 
 // ========================= MAIN =========================
 int main(int argc, const char **argv) {
-  psr::perf::ScopedPhase total{"TOTAL"};
+  int exitCode = 0;
+  std::string analysisLabel;
 
-  cl::HideUnrelatedOptions({&CAT});
-  cl::ParseCommandLineOptions(argc, argv,
-      "Cluster-representative IFDS Taint (PhASAR)\n");
+  { // ----- TOTAL scope begins -----
+    psr::perf::ScopedPhase total{"TOTAL"};
 
-  if (InputModules.size() != 1) {
-    errs() << "[error] this PhASAR build expects exactly one IR file; got "
-           << InputModules.size() << "\n";
-    return 2;
-  }
+    cl::HideUnrelatedOptions({&CAT});
+    cl::ParseCommandLineOptions(argc, argv,
+        "Cluster-representative IFDS Taint (PhASAR)\n");
 
-  // IRDB
-  std::unique_ptr<psr::LLVMProjectIRDB> IRDBPtr;
-  {
-    psr::perf::ScopedPhase p{"IRDB load"};
-    IRDBPtr = std::make_unique<psr::LLVMProjectIRDB>(InputModules[0]);
-  }
-  auto &IRDB = *IRDBPtr;
+    if (InputModules.size() != 1) {
+      errs() << "[error] this PhASAR build expects exactly one IR file; got "
+             << InputModules.size() << "\n";
+      exitCode = 2;
+      // fall through; we still want TOTAL to print
+    } else {
+      // IRDB
+      std::unique_ptr<psr::LLVMProjectIRDB> IRDBPtr;
+      {
+        psr::perf::ScopedPhase p{"IRDB load"};
+        IRDBPtr = std::make_unique<psr::LLVMProjectIRDB>(InputModules[0]);
+      }
+      auto &IRDB = *IRDBPtr;
 
-  // Entry points
-  auto EntryPoints = splitCSV(EntryPointsOpt);
-  if (EntryPoints.empty()) EntryPoints = {"main"};
+      // Entry points
+      auto EntryPoints = splitCSV(EntryPointsOpt);
+      if (EntryPoints.empty()) EntryPoints = {"main"};
 
-  // Alias clusters
-  std::optional<psr::AliasPipelineResult> Pipe;
-  {
-    psr::perf::ScopedPhase p{"Alias cluster build"};
-    Pipe = psr::buildAliasClusters(IRDB, psr::AliasAnalysisType::CFLAnders);
-  }
-  psr::AliasClusterInfo &ACI = *Pipe->Clusters;
+      // Alias clusters
+      std::optional<psr::AliasPipelineResult> Pipe;
+      {
+        psr::perf::ScopedPhase p{"Alias cluster build"};
+        Pipe = psr::buildAliasClusters(IRDB, psr::AliasAnalysisType::CFLAnders);
+      }
+      psr::AliasClusterInfo &ACI = *Pipe->Clusters;
 
-  // -------- clusters mode --------
-  if (AnalysisKind == "clusters") {
-    {
-      psr::perf::ScopedPhase p{"Cluster reporting"};
-      const std::string stdoutText =
-          buildClustersText(ACI, Pipe->TotalPointers,
-                            /*IncludeMembers=*/ShowClusterMembers,
-                            /*MaxMembers=*/MaxMembersToPrint);
-      outs() << stdoutText;
+      if (AnalysisKind == "clusters") {
+        analysisLabel = "clusters";
+        psr::perf::ScopedPhase analysisScope{"ANALYSIS: clusters"};
+        {
+          psr::perf::ScopedPhase p{"Cluster reporting"};
+          const std::string stdoutText =
+              buildClustersText(ACI, Pipe->TotalPointers,
+                                /*IncludeMembers=*/ShowClusterMembers,
+                                /*MaxMembers=*/MaxMembersToPrint);
+          outs() << stdoutText;
 
-      if (!EmitClustersReport.empty()) {
-        const std::string fileText =
-            buildClustersText(ACI, Pipe->TotalPointers,
-                              /*IncludeMembers=*/true,
-                              /*MaxMembers=*/MaxMembersToPrint);
-        std::error_code EC;
-        raw_fd_ostream Out(EmitClustersReport, EC, sys::fs::OF_Text);
-        if (EC) {
-          errs() << "[error] cannot write clusters report: "
-                 << EmitClustersReport << " (" << EC.message() << ")\n";
-          return 3;
+          if (!EmitClustersReport.empty()) {
+            const std::string fileText =
+                buildClustersText(ACI, Pipe->TotalPointers,
+                                  /*IncludeMembers=*/true,
+                                  /*MaxMembers=*/MaxMembersToPrint);
+            std::error_code EC;
+            raw_fd_ostream Out(EmitClustersReport, EC, sys::fs::OF_Text);
+            if (EC) {
+              errs() << "[error] cannot write clusters report: "
+                     << EmitClustersReport << " (" << EC.message() << ")\n";
+              exitCode = 3;
+            } else {
+              Out << fileText;
+            }
+          }
         }
-        Out << fileText;
-      }
-    }
-    psr::perf::printPhaseSummary();
-    return 0;
-  }
+      } else if (AnalysisKind == "ifds-taint") {
+        analysisLabel = "ifds-taint";
+        psr::perf::ScopedPhase analysisScope{"ANALYSIS: ifds-taint"};
 
-  // -------- ifds-taint mode --------
-  if (AnalysisKind == "ifds-taint") {
-    // ICFG
-    std::unique_ptr<psr::LLVMBasedICFG> ICFGPtr;
-    {
-      psr::perf::ScopedPhase p{"ICFG build (OTF)"};
-      ICFGPtr = std::make_unique<psr::LLVMBasedICFG>(
-          &IRDB, psr::CallGraphAnalysisType::OTF, EntryPoints);
-    }
-    auto &ICFG = *ICFGPtr;
-
-    // Taint config
-    psr::LLVMTaintConfig TC(
-      psr::LLVMTaintConfig::TaintDescriptionCallBackTy{},
-      psr::LLVMTaintConfig::TaintDescriptionCallBackTy{},
-      psr::LLVMTaintConfig::TaintDescriptionCallBackTy{}
-    );
-    psr::TaintStats Stats{};
-    {
-      psr::perf::ScopedPhase p{"Taint config load"};
-      if (!ConfigPath.empty()) {
-        auto Built = psr::buildConfigFromJSONOrDie(ConfigPath, IRDB);
-        TC = std::move(Built.Config);
-        Stats = Built.Stats;
-      } else {
-        TC = makeSimpleCallbackConfig();
-      }
-    }
-
-    // Analysis + solver
-    std::unique_ptr<psr::IFDSClusterTaintAnalysis> Analysis;
-    std::unique_ptr<psr::IFDSSolver<psr::ClusterIFDSDomain>> Solver;
-    {
-      psr::perf::ScopedPhase p{"IFDS construction"};
-      Analysis = std::make_unique<psr::IFDSClusterTaintAnalysis>(
-          IRDB, EntryPoints, ICFG, ACI, TC);
-      Solver = std::make_unique<psr::IFDSSolver<psr::ClusterIFDSDomain>>(
-          *Analysis, &ICFG);
-    }
-    {
-      psr::perf::ScopedPhase p{"IFDS solve (taint)"};
-      Solver->solve();
-    }
-
-    llvm::outs() << "[dbg] solver done; hits="
-                 << Analysis->getSinkHits().size() << "\n";
-    for (const auto &H : Analysis->getSinkHits()) {
-      llvm::outs() << "  [hit] " << H.SinkName
-                   << "  call=" << psr::llvmIRToShortString(H.Call)
-                   << "  rep="  << psr::llvmIRToShortString(H.ClusterRep)
-                   << "\n";
-    }
-
-    {
-      psr::perf::ScopedPhase p{"Report build/output"};
-      const std::string Report =
-          psr::buildTextReport(InputModules[0], EntryPoints, Stats, *Analysis);
-
-      if (EmitTextReport.empty()) {
-        outs() << Report;
-      } else {
-        std::error_code EC;
-        raw_fd_ostream Out(EmitTextReport, EC, sys::fs::OF_Text);
-        if (EC) {
-          errs() << "[error] cannot write report: " << EmitTextReport
-                 << " (" << EC.message() << ")\n";
-          return 3;
+        // ICFG
+        std::unique_ptr<psr::LLVMBasedICFG> ICFGPtr;
+        {
+          psr::perf::ScopedPhase p{"ICFG build (OTF)"};
+          ICFGPtr = std::make_unique<psr::LLVMBasedICFG>(
+              &IRDB, psr::CallGraphAnalysisType::OTF, EntryPoints);
         }
-        Out << Report;
+        auto &ICFG = *ICFGPtr;
+
+        // Taint config
+        psr::LLVMTaintConfig TC(
+          psr::LLVMTaintConfig::TaintDescriptionCallBackTy{},
+          psr::LLVMTaintConfig::TaintDescriptionCallBackTy{},
+          psr::LLVMTaintConfig::TaintDescriptionCallBackTy{}
+        );
+        psr::TaintStats Stats{};
+        {
+          psr::perf::ScopedPhase p{"Taint config load"};
+          if (!ConfigPath.empty()) {
+            auto Built = psr::buildConfigFromJSONOrDie(ConfigPath, IRDB);
+            TC = std::move(Built.Config);
+            Stats = Built.Stats;
+          } else {
+            TC = makeSimpleCallbackConfig();
+          }
+        }
+
+        // Analysis + solver
+        std::unique_ptr<psr::IFDSClusterTaintAnalysis> Analysis;
+        std::unique_ptr<psr::IFDSSolver<psr::ClusterIFDSDomain>> Solver;
+        {
+          psr::perf::ScopedPhase p{"IFDS construction"};
+          Analysis = std::make_unique<psr::IFDSClusterTaintAnalysis>(
+              IRDB, EntryPoints, ICFG, ACI, TC);
+          Solver = std::make_unique<psr::IFDSSolver<psr::ClusterIFDSDomain>>(
+              *Analysis, &ICFG);
+        }
+        {
+          psr::perf::ScopedPhase p{"IFDS solve (taint)"};
+          Solver->solve();
+        }
+
+        outs() << "[dbg] solver done; hits="
+               << Analysis->getSinkHits().size() << "\n";
+        for (const auto &H : Analysis->getSinkHits()) {
+          outs() << "  [hit] " << H.SinkName
+                 << "  call=" << psr::llvmIRToShortString(H.Call)
+                 << "  rep="  << psr::llvmIRToShortString(H.ClusterRep)
+                 << "\n";
+        }
+
+        {
+          psr::perf::ScopedPhase p{"Report build/output"};
+          const std::string Report =
+              psr::buildTextReport(InputModules[0], EntryPoints, Stats, *Analysis);
+          if (EmitTextReport.empty()) {
+            outs() << Report;
+          } else {
+            std::error_code EC;
+            raw_fd_ostream Out(EmitTextReport, EC, sys::fs::OF_Text);
+            if (EC) {
+              errs() << "[error] cannot write report: " << EmitTextReport
+                     << " (" << EC.message() << ")\n";
+              exitCode = 3;
+            } else {
+              Out << Report;
+            }
+          }
+        }
+
+      } else {
+        errs() << "[error] unknown --analysis=" << AnalysisKind
+               << " (use 'clusters' or 'ifds-taint')\n";
+        exitCode = 2;
       }
     }
 
+    // per-phase list printed before leaving TOTAL scope is fine
     psr::perf::printPhaseSummary();
-    return 0;
-  }
+  } // ----- TOTAL scope ends; TOTAL destructor pushes the phase -----
 
-  errs() << "[error] unknown --analysis=" << AnalysisKind
-         << " (use 'clusters' or 'ifds-taint')\n";
-  return 2;
+  // Now TOTAL exists in the summary store
+  psr::perf::printTotals(analysisLabel.empty() ? std::string_view{} 
+                                               : std::string_view(analysisLabel));
+  return exitCode;
 }
+
