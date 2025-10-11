@@ -87,6 +87,23 @@ inline std::string fmtMs(double ms) {
   return os.str();
 }
 
+// Adaptive time formatter for totals/summary lines.
+inline std::string fmtAdaptiveTime(double ms) {
+  double s = ms / 1000.0;
+  std::ostringstream os;
+  os.setf(std::ios::fixed);
+  if (s < 1.0) {
+    os << std::setprecision(3) << ms << " ms";
+  } else if (s < 60.0) {
+    os << std::setprecision(3) << s << " s";
+  } else if (s < 3600.0) {
+    os << std::setprecision(3) << (s / 60.0) << " min";
+  } else {
+    os << std::setprecision(3) << (s / 3600.0) << " h";
+  }
+  return os.str();
+}
+
 // ---------- Verbosity control ----------
 enum class TimingVerbosity { Verbose = 1, SummaryOnly = 0, Silent = 2 };
 
@@ -163,7 +180,7 @@ inline void printTotals(std::string_view AnalysisLabel = {}) {
   if (const auto *Tot = findPhase("TOTAL")) {
     const auto rssDelta = (Tot->RSSEnd > Tot->RSSStart) ? (Tot->RSSEnd - Tot->RSSStart) : 0ULL;
     llvm::outs() << "\n[time] TOTAL: "
-                 << fmtMs(Tot->Ms) << " ms"
+                 << fmtAdaptiveTime(Tot->Ms)
                  << " | rss start=" << fmtBytes(Tot->RSSStart)
                  << " end="         << fmtBytes(Tot->RSSEnd)
                  << " (Δ "          << fmtBytes(rssDelta) << ")"
@@ -177,7 +194,7 @@ inline void printTotals(std::string_view AnalysisLabel = {}) {
     if (const auto *A = findPhase(tag)) {
       const auto rssDelta = (A->RSSEnd > A->RSSStart) ? (A->RSSEnd - A->RSSStart) : 0ULL;
       llvm::outs() << "[time] " << tag << ": "
-                   << fmtMs(A->Ms) << " ms"
+                   << fmtAdaptiveTime(A->Ms)
                    << " | rss start=" << fmtBytes(A->RSSStart)
                    << " end="         << fmtBytes(A->RSSEnd)
                    << " (Δ "          << fmtBytes(rssDelta) << ")"
@@ -194,7 +211,7 @@ inline void printPhaseSummary() {
   for (const auto &R : phases()) {
     const auto rssDelta = (R.RSSEnd > R.RSSStart) ? (R.RSSEnd - R.RSSStart) : 0ULL;
     llvm::outs() << "  - " << R.Name << ": "
-                 << fmtMs(R.Ms) << " ms"
+                 << fmtAdaptiveTime(R.Ms)
                  << " | rss start=" << fmtBytes(R.RSSStart)
                  << " end="         << fmtBytes(R.RSSEnd)
                  << " (Δ "          << fmtBytes(rssDelta) << ")"
