@@ -1,10 +1,22 @@
 {
-  "source_functions": [
-    { "name": "fgets", "generated_args": [0] }
-  ],
-  "sink_functions": [
-    { "name": "system", "tainted_args": [0] }
-  ],
-  "sanitizer_functions": [],
-  "propagators": []
+  "name": "converted-config",
+  "version": 1.0,
+  "functions": [
+    {
+      "name": "fgets",
+      "params": {
+        "source": [
+          0
+        ]
+      }
+    },
+    {
+      "name": "system",
+      "params": {
+        "sink": [
+          0
+        ]
+      }
+    }
+  ]
 }

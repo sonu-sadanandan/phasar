@@ -1,0 +1,167 @@
+{
+  "name": "file-path-taint",
+  "version": 1.0,
+  "functions": [
+    {
+      "name": "getenv",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "getline",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "fgets",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "fread",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "read",
+      "params": {
+        "source": [1]
+      }
+    },
+    {
+      "name": "getcwd",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "mmap",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "open",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "open64",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "openat",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "fopen",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "fopen64",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "creat",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "execve",
+      "params": {
+        "sink": [0, 1]
+      }
+    },
+    {
+      "name": "system",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "printf",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "fprintf",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "snprintf",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "write",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "pwrite",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "strcpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "strncpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "strcat",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "memcpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "memmove",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "realpath",
+      "params": {
+        "sink": [0]
+      }
+    }
+  ]
+}

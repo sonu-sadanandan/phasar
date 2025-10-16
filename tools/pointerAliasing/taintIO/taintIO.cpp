@@ -10,6 +10,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "phasar/PhasarLLVM/Utils/LLVMShorthands.h"   
+#include "phasar/PhasarLLVM/Pointer/AliasCommon.h"
 #include "../IFDSClusterTaintAnalysis.h"              
 
 using json = nlohmann::json;

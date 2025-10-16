@@ -1,0 +1,138 @@
+{
+  "name": "bzip2-taint",
+  "version": 1.0,
+  "functions": [
+    {
+      "name": "malloc",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "calloc",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "realloc",
+      "params": {
+        "source": [0],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "free",
+      "params": {
+        "source": [0],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "_ZdlPv",
+      "params": {
+        "source": [0],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "fopen",
+      "params": {
+        "source": [0],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "fclose",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "fread",
+      "params": {
+        "source": [0]
+      }
+    },
+    {
+      "name": "fwrite",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "open",
+      "params": {
+        "source": [0],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "close",
+      "params": {
+        "sink": [0]
+      }
+    },
+    {
+      "name": "read",
+      "params": {
+        "source": [1]
+      }
+    },
+    {
+      "name": "write",
+      "params": {
+        "sink": [1]
+      }
+    },
+    {
+      "name": "memcpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "memmove",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "strcpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "strncpy",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "strcat",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "sprintf",
+      "params": {
+        "source": [1],
+        "sink": [0]
+      }
+    },
+    {
+      "name": "snprintf",
+      "params": {
+        "source": [2],
+        "sink": [0]
+      }
+    }
+  ]
+}
