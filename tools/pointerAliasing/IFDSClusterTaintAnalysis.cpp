@@ -144,20 +144,22 @@ namespace psr {
   const llvm::Value *IFDSClusterTaintAnalysis::baseObject(const llvm::Value *V) const {
     if (!V) return nullptr;
 
-    // Fast path: drop in-bounds constant offsets (handles many GEPs cleanly)
+    // Drop in-bounds constant offsets and casts first (cheap canonicalization)
     V = V->stripInBoundsOffsets();
+    V = V->stripPointerCasts();
 
-    // Ask LLVM for underlying objects (allocas/globals/args), bounded search
-    llvm::SmallVector<llvm::Value*, 4> Under;
-    llvm::getUnderlyingObject(const_cast<llvm::Value*>(V), 20);
+    // Use the *plural* API and actually collect the results.
+    llvm::SmallVector<const llvm::Value*, 4> Under;
+    llvm::getUnderlyingObjects(V, Under, /*LI=*/nullptr, /*MaxLookup=*/20);
 
-    if (Under.size() == 1) return Under.front();
+    if (Under.size() == 1) {
+      return Under.front();
+    }
 
-    // Conservative fallback: peel one level if obviously a pointer transform
+    // Fallback peeling (very conservative)
     if (const auto *G = llvm::dyn_cast<llvm::GEPOperator>(V)) return G->getPointerOperand();
     if (const auto *B = llvm::dyn_cast<llvm::BitCastOperator>(V)) return B->getOperand(0);
 
-    // Could not canonicalize further; keep as-is
     return V;
   }
 
@@ -263,12 +265,26 @@ namespace psr {
 
     // load: memory cell -> loaded SSA
     if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Curr)) {
-      return transferAndKillFlowRep<std::set<d_t>>(repBase(Load), repBase(Load->getPointerOperand()), ACI_);
+      const auto *PtrR = repBase(Load->getPointerOperand());
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+        [PtrR](d_t In) -> std::set<d_t> {
+          if (LLVMZeroValue::isLLVMZeroValue(In)) return {In};
+          // If the cell (base) is tainted, the loaded value should carry the *same* base rep.
+          return (In == PtrR) ? std::set<d_t>{PtrR, In} : std::set<d_t>{In};
+        }
+      );    
     }
 
     // gep: address computation from tainted base
     if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Curr)) {
-      return transferAndKillFlowRep<std::set<d_t>>(repBase(GEP), repBase(GEP->getPointerOperand()), ACI_);
+      const auto *BaseR = repBase(GEP->getPointerOperand());
+      return FlowFunctions<ClusterIFDSDomain, C>::lambdaFlow(
+        [BaseR](d_t In) -> std::set<d_t> {
+          if (LLVMZeroValue::isLLVMZeroValue(In)) return {In};
+          // Address arithmetic does not change the base object.
+          return (In == BaseR) ? std::set<d_t>{BaseR, In} : std::set<d_t>{In};
+        }
+      );    
     }
 
     // extractvalue / insertvalue (aggregate)
@@ -431,7 +447,9 @@ namespace psr {
         const bool LeakByVal  = LeakR.count(Rs);
         const bool LeakByCell = Cs && LeakCellR.count(Cs);
         if (LeakByVal || LeakByCell) {
-          pushSink(this->SinkHits_, CS, DestFun->getName().str(), Rs);
+          // **Canonicalize**: always record the base-object cluster rep if available.
+          const auto *BaseRep = (Cs ? Cs : Rs);
+          pushSink(this->SinkHits_, CS, DestFun->getName().str(), BaseRep);
         }
 
         // kill facts sanitized here (by rep)
